@@ -1,0 +1,49 @@
+# ============================================================
+# dbt project config — defines the dbt project identity,
+# folder structure, and materialization defaults.
+# Schema names follow Medallion architecture: bronze/silver/gold.
+# ============================================================
+name: 'chronos_seat'       # dbt project name: used in schema naming and logging
+version: '1.0.0'           # dbt project version (not the app version)
+config-version: 2          # dbt config schema version: v2 is current as of dbt 1.11+
+
+profile: 'chronos_seat'    # References the profile name in profiles.yml (defines the database connection)
+
+# --- Folder paths ---
+model-paths: ["models"]        # Where dbt looks for .sql model files
+analysis-paths: ["analysis"]   # Where dbt looks for ad-hoc .sql analysis files
+test-paths: ["tests"]          # Where dbt looks for custom data tests
+seed-paths: ["seeds"]          # Where dbt looks for CSV seed files (dim_date, dim_change_type, etc.)
+macro-paths: ["macros"]        # Where dbt looks for Jinja macros (generate_sk, etc.)
+
+# --- Build output ---
+target-path: "target"         # Where dbt puts compiled SQL, manifest.json, run results
+clean-targets:                 # Directories cleaned by `dbt clean`
+  - "target"                   # Remove compiled artifacts
+  - "dbt_packages"             # Remove installed dbt packages (reinstalled by `dbt deps`)
+
+# --- Seed configuration ---
+# Seeds are dimension/fact reference data (conformed dimensions) consumed by
+# gold-layer models. They live in the gold schema alongside dim/fact tables.
+# Medallion rule: Gold depends only on Silver. Since gold models join to
+# dim_department, dim_change_type, and dim_change_reason, the seeds must also
+# be in gold — not bronze or a separate reference schema.
+seeds:
+  chronos_seat:
+    +schema: gold             # dim_date, dim_change_type, dim_change_reason, dim_department
+
+# --- Model materialization defaults by Medallion layer ---
+# bronze  = 1:1 views over raw data (lightweight, always current)
+# silver  = cleaned, joined, deduplicated (incremental for performance)
+# gold    = business-ready dimensional models (what Rill reads)
+models:
+  chronos_seat:
+    bronze:
+      +materialized: view      # Bronze models are views: lightweight, always reflect latest raw data
+      +schema: bronze          # Bronze tables go into the "bronze" schema (matches data/raw/ folder)
+    silver:
+      +materialized: incremental  # Silver models are incremental: append new rows, don't rebuild
+      +schema: silver          # Silver tables go into the "silver" schema (matches data/silver/ folder)
+    gold:
+      +materialized: table     # Gold models are full tables: rebuilt each run for clean dimensional data
+      +schema: gold            # Gold tables go into the "gold" schema (matches data/gold/ folder, what Rill reads)

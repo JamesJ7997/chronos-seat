@@ -1,0 +1,46 @@
+{
+    "path_count": 183,
+    "parsed_path_count": 183,
+    "static_analysis_path_count": 0,
+    "static_analysis_parsed_path_count": 0,
+    "is_partial_parse_enabled": true,
+    "is_static_analysis_enabled": true,
+    "read_files_elapsed": 0.005204936023801565,
+    "load_macros_elapsed": 0.4717598390416242,
+    "parse_project_elapsed": 0.010251810017507523,
+    "patch_sources_elapsed": 4.649045877158642e-06,
+    "process_manifest_elapsed": 0.015138757007662207,
+    "load_all_elapsed": 0.5304191579925828,
+    "projects": [
+        {
+            "project_name": "chronos_seat",
+            "elapsed": 0.005145220027770847,
+            "parsers": [],
+            "parsed_path_count": 0
+        },
+        {
+            "project_name": "dbt_duckdb",
+            "elapsed": 0.0016938920016400516,
+            "parsers": [],
+            "parsed_path_count": 0
+        },
+        {
+            "project_name": "dbt",
+            "elapsed": 0.0017496750224381685,
+            "parsers": [
+                {
+                    "parser": "doc",
+                    "elapsed": 0.00011470203753560781,
+                    "parsed_path_count": 1
+                }
+            ],
+            "parsed_path_count": 1
+        },
+        {
+            "project_name": "dbt_utils",
+            "elapsed": 0.0016175690107047558,
+            "parsers": [],
+            "parsed_path_count": 0
+        }
+    ]
+}

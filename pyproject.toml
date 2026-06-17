@@ -1,0 +1,104 @@
+# ============================================================
+# Project metadata — defines the Python package identity.
+# uv and pip read this to install the project and its deps.
+#
+# NOTE: All dependencies listed below are already installed by the
+# `uv add` command in step 1.2. This file is the source of truth —
+# `uv sync` reads here and generates uv.lock automatically.
+# ============================================================
+[project]
+name = "chronos_seat"  # Package name: used by `uv pip install -e .` and in imports
+requires-python = ">=3.13"  # Minimum Python: Dagster 1.13+ and Polars 1.41+ need 3.13
+version = "0.1.0"  # Semver: start at 0.1.0 for initial development
+description = "Position-centric local lakehouse for enterprise workforce tracking"  # Human-readable summary for PyPI/pip
+
+# ============================================================
+# Runtime dependencies — installed in all environments (dev + prod).
+# Pinned to minimum versions tested with this codebase.
+# ============================================================
+dependencies = [
+    # --- Orchestration ---
+    "dagster==1.13.9",          # Core Dagster framework: assets, jobs, sensors, resources
+    "dagster-dbt>=0.29.9",      # Dagster-dbt integration: @dbt_assets, DbtCliResource
+    "dagster-dg-cli>=1.13.9",   # Dagster CLI (`dg` command): project scaffolding, dev server
+    "dagster-duckdb>=0.29.9",   # Dagster-DuckDB integration: DuckDBResource (managed connections)
+    "dagster-webserver>=1.13.9",# Dagster UI: asset graph, run history, sensor status
+
+    # --- Transformation ---
+    "dbt-core>=1.11.11,<1.12",   # dbt engine: SQL compilation, ref(), incremental models (dagster-dbt 0.29.9 requires <1.12)
+    "dbt-duckdb>=1.10.1",       # dbt adapter for DuckDB: runs dbt models against local DuckDB
+
+    # --- Data engine ---
+    "duckdb>=1.5.3",            # DuckDB: embedded analytical database, Parquet reader/writer
+
+    # --- File I/O ---
+    "openpyxl>=3.1.5",          # Read/write Excel (.xlsx) files: contractor tracking input
+    "polars>=1.41.2",           # DataFrame library: mock data generation, silver transforms
+    "pyarrow>=24.0.0",          # Parquet support: Polars/DuckDB read/write Parquet files
+    "xlsxwriter>=3.2.9",        # Write Excel (.xlsx) files: mock contractor tracking output
+]
+
+# ============================================================
+# Dev-only dependencies — installed with `uv sync --group dev`.
+# Not included in Docker production image.
+# ============================================================
+[dependency-groups]
+dev = [
+    "dagster-dg-cli",           # Already in runtime deps; listed here for `uv sync --group dev` completeness
+    "dagster-webserver",        # Already in runtime deps; needed for local dev even in dev-only installs
+    "pytest>=8.0.0",            # Test runner: `make test`, CI pipeline
+    "ruff>=0.5.0",              # Python linter + formatter: `make lint`, `make format`
+    "sqlfluff>=3.0.0",          # SQL linter: checks dbt models for style/errors
+    "pre-commit>=3.7.0",        # Git hook manager: runs ruff/sqlfluff before every commit
+]
+
+# ============================================================
+# Build system — tells uv/pip how to build the package.
+# Hatchling is uv's default; explicit here for CI reproducibility.
+# ============================================================
+[build-system]
+requires = ["hatchling"]       # Build backend: uv installs this to create the wheel
+build-backend = "hatchling.build"  # Entry point: hatchling's build function
+
+# ============================================================
+# Hatch build config — ensures pyproject.toml is included in the wheel.
+# Needed so `dg` CLI can read project metadata at runtime.
+# ============================================================
+[tool.hatch.build.targets.wheel]
+force-include = { "pyproject.toml" = "pyproject.toml" }  # Ship pyproject.toml inside the wheel package
+
+# ============================================================
+# Ruff — Python linter + formatter config.
+# ============================================================
+[tool.ruff]
+target-version = "py313"       # Generate Python 3.13-compatible code (walrus operator, etc.)
+line-length = 100              # Max line length: matches Dagster community style
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors: indentation, whitespace, syntax issues
+    "F",   # PyFlakes: unused imports, undefined names, logic errors
+    "I",   # isort: import ordering and grouping
+    "N",   # pep8-naming: class/function/variable naming conventions
+    "W",   # pycodestyle warnings: trailing whitespace, blank line issues
+    "UP",  # pyupgrade: modernize syntax (e.g., str.format → f-strings)
+]
+
+# ============================================================
+# Pytest — test runner config.
+# ============================================================
+[tool.pytest.init_options]
+testpaths = ["tests"]          # Directory where pytest discovers test files
+
+# ============================================================
+# Dagster DG CLI — project type and module registration.
+# `dg` uses this to know where your Dagster code lives.
+# ============================================================
+[tool.dg]
+directory_type = "project"     # Tells `dg` this is a Dagster project (not a workspace)
+
+[tool.dg.project]
+root_module = "chronos_seat"   # Python module where definitions.py lives
+registry_modules = [
+    "chronos_seat.components.*",  # Auto-discover Dagster components in this namespace
+]

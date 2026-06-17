@@ -1,0 +1,21 @@
+# ============================================================
+# dbt connection profile — defines which database dbt connects to.
+# The `target: dev` is the default profile used by `dbt build`.
+# ============================================================
+chronos_seat:
+  target: dev
+  outputs:
+    dev:
+      type: duckdb
+      extensions:
+        - ducklake
+      # DuckLake: .ducklake file = catalog metadata, .ducklake.files/ = Parquet data.
+      # Using `attach` so all schemas (bronze, silver, gold) live inside
+      # the DuckLake catalog — not as ghost schemas in DuckDB's main db.
+      attach:
+        - path: "ducklake:dbt_project/data/gold/chronos.ducklake"
+          alias: chronos
+          options:
+            data_path: dbt_project/data/gold/chronos.ducklake.files
+      database: chronos
+      threads: 4

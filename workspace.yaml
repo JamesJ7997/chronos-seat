@@ -1,0 +1,7 @@
+# ============================================================
+# Dagster workspace config — tells Dagster where to find code.
+# The `dg` CLI reads this to discover assets, jobs, and sensors.
+# ============================================================
+load_from:
+  - python_module:
+      module_name: src.chronos_seat.definitions

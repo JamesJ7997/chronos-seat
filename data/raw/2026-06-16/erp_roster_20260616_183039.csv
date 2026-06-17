@@ -1,0 +1,9 @@
+employee_id,employee_name,employee_type,position_id,position_title,department_id,department_name,cost_center,hire_date,termination_date,source_system
+EMP-001,Alice Johnson,FULL-TIME,POS-1001,Sr. Data Engineer,DEPT-ENG,Engineering,CC-5100,2021-03-15,"",ERP
+EMP-002,Bob Smith,FULL-TIME,POS-1002,Data Analyst,DEPT-ENG,Engineering,CC-5100,2022-07-01,"",ERP
+EMP-003,Carol Williams,CONTRACTOR,POS-1003,ML Engineer,DEPT-AIML,AI/ML,CC-5200,2024-01-10,"",ERP
+EMP-004,David Brown,FULL-TIME,POS-1004,Analytics Engineer,DEPT-DATA,Data,CC-5300,2023-06-20,"",ERP
+EMP-005,Eve Davis,FULL-TIME,POS-1005,Data Engineer,DEPT-ENG,Engineering,CC-5100,2020-11-08,"",ERP
+EMP-006,Frank Miller,FULL-TIME,POS-1006,Staff Engineer,DEPT-ENG,Engineering,CC-5100,2019-04-22,"",ERP
+EMP-007,Grace Lee,CONTRACTOR,POS-1002,Data Analyst,DEPT-ENG,Engineering,CC-5100,2025-06-01,"",ERP
+EMP-008,Henry Wilson,FULL-TIME,POS-1007,VP Engineering,DEPT-ENG,Engineering,CC-5100,2018-01-15,"",ERP
