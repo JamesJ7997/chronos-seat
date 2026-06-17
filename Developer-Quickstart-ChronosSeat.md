@@ -358,10 +358,10 @@ chronos_seat:
       # Using `attach` so all schemas (bronze, silver, gold) live inside
       # the DuckLake catalog — not as ghost schemas in DuckDB's main db.
       attach:
-        - path: "ducklake:dbt_project/data/gold/chronos.ducklake"
+        - path: "ducklake:dbt_project/data/chronos.ducklake"
           alias: chronos
           options:
-            data_path: dbt_project/data/gold/chronos.ducklake.files
+            data_path: dbt_project/data/chronos.ducklake.files
       database: chronos
       threads: 4
 ```
@@ -642,7 +642,7 @@ from dagster_duckdb import DuckDBResource  # Built-in Dagster-DuckDB integration
 # All schemas (bronze, silver, gold) live inside the DuckLake catalog via the
 # attach pattern in dbt_project/profiles.yml. Dagster connects directly via ducklake: URI.
 duckdb_resource = DuckDBResource(
-    database="ducklake:./dbt_project/data/gold/chronos.ducklake",  # DuckLake catalog (ducklake: URI)
+    database="ducklake:./dbt_project/data/chronos.ducklake",  # DuckLake catalog (ducklake: URI)
 )
 ```
 
@@ -1155,23 +1155,23 @@ cd ~/workspace/projects/chronos-seat/dbt_project
 #   data/gold/   = DuckLake catalog file + Parquet data files
 mkdir -p data/silver data/gold
 
-# Attach the DuckLake catalog (creates data/gold/chronos.ducklake + data/gold/chronos.ducklake.files/ on first use)
+# Attach the DuckLake catalog (creates data/chronos.ducklake + data/chronos.ducklake.files/ on first use)
 # The `alias: chronos` matches the alias in profiles.yml — all schemas (bronze, silver, gold)
 # will be created inside this catalog, not as ghost schemas in DuckDB's main database.
-duckdb -c "ATTACH 'ducklake:data/gold/chronos.ducklake' AS chronos;"
+duckdb -c "ATTACH 'ducklake:data/chronos.ducklake' AS chronos;"
 ```
 
 Verify:
 
 ```bash
-ls -la data/gold/chronos.ducklake
+ls -la data/chronos.ducklake
 # → DuckLake catalog file (small, ~few KB)
 
-duckdb -c "ATTACH 'ducklake:data/gold/chronos.ducklake' AS chronos; SHOW TABLES;"
+duckdb -c "ATTACH 'ducklake:data/chronos.ducklake' AS chronos; SHOW TABLES;"
 # → No tables yet (expected — dbt will create them)
 ```
 
-> **Why DuckLake?** Tables created through dbt are stored as Parquet files in `dbt_project/data/gold/chronos.ducklake.files/`, not inside the `.duckdb` file. This means the data is portable, inspectable, and not locked into a single binary file. The `.ducklake` file is just the catalog (metadata).
+> **Why DuckLake?** Tables created through dbt are stored as Parquet files in `dbt_project/data/chronos.ducklake.files/`, not inside the `.duckdb` file. This means the data is portable, inspectable, and not locked into a single binary file. The `.ducklake` file is just the catalog (metadata).
 >
 > **Why `attach` instead of `path`?** The old `path: ducklake:` approach only put the gold schema inside DuckLake — bronze and silver were "ghost" schemas in DuckDB's `main` database. The `attach` pattern ensures **all three Medallion schemas** (bronze, silver, gold) live inside the DuckLake catalog, giving every layer snapshot history and Parquet-backed storage.
 
@@ -1232,7 +1232,7 @@ uv run dbt run --select dim_date
 Verify:
 
 ```bash
-duckdb -c "ATTACH 'ducklake:dbt_project/data/gold/chronos.ducklake' AS chronos; SELECT COUNT(*) AS row_count FROM chronos.bronze.dim_date;"
+duckdb -c "ATTACH 'ducklake:dbt_project/data/chronos.ducklake' AS chronos; SELECT COUNT(*) AS row_count FROM chronos.bronze.dim_date;"
 # Expected: ~5479 rows (15 years × 365.25 days)
 ```
 
@@ -1616,7 +1616,7 @@ version: "1.0"
 
 ```yaml
 type: duckdb
-dsn: ducklake:./dbt_project/data/gold/chronos.ducklake
+dsn: ducklake:./dbt_project/data/chronos.ducklake
 sql: |
   SELECT
     dp.position_id,
@@ -2043,7 +2043,7 @@ from hashlib import md5
 
 
 def _get_duckdb():
-    conn = duckdb.connect("ducklake:./dbt_project/data/gold/chronos.ducklake")
+    conn = duckdb.connect("ducklake:./dbt_project/data/chronos.ducklake")
     return conn
 
 
@@ -2354,7 +2354,7 @@ Required environment variables for the portal (create `portal/.env.local`):
 ```bash
 DAGSTER_URL=http://localhost:2320
 RILL_URL=http://localhost:2321
-DUCKDB_PATH=ducklake:../dbt_project/data/gold/chronos.ducklake
+DUCKDB_PATH=ducklake:../dbt_project/data/chronos.ducklake
 ```
 
 ### 10.3 Key Components
@@ -2500,7 +2500,7 @@ export default function EntityTable({
 import { NextRequest, NextResponse } from "next/server";
 import duckdb from "duckdb";
 
-const DB_PATH = process.env.DUCKDB_PATH || "ducklake:./dbt_project/data/gold/chronos.ducklake";
+const DB_PATH = process.env.DUCKDB_PATH || "ducklake:./dbt_project/data/chronos.ducklake";
 
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
@@ -2656,7 +2656,7 @@ services:
     environment:
       - DAGSTER_URL=http://dagster-webserver:2320
       - RILL_URL=http://rill:2321
-      - DUCKDB_PATH=ducklake:/dbt_project/data/gold/chronos.ducklake
+      - DUCKDB_PATH=ducklake:/dbt_project/data/chronos.ducklake
     volumes:
       - chronos-data:/data:ro
     depends_on:
@@ -2796,7 +2796,7 @@ import pytest
 
 
 def _get_conn():
-    return duckdb.connect("ducklake:./dbt_project/data/gold/chronos.ducklake")
+    return duckdb.connect("ducklake:./dbt_project/data/chronos.ducklake")
 
 
 def test_no_duplicate_current_positions():
@@ -2848,7 +2848,7 @@ import pytest
 
 
 def _get_conn():
-    return duckdb.connect("ducklake:./dbt_project/data/gold/chronos.ducklake")
+    return duckdb.connect("ducklake:./dbt_project/data/chronos.ducklake")
 
 
 def test_dim_position_exists():
@@ -3021,7 +3021,7 @@ curl http://localhost:2319                # Portal
         ↓
 [dbt build] → dim_position, dim_employee, fact_position_occupancy_event, bridge_position_occupancy
         ↓
-[Rill] → reads from DuckLake catalog (dbt_project/data/gold/chronos.ducklake) → dashboards
+[Rill] → reads from DuckLake catalog (dbt_project/data/chronos.ducklake) → dashboards
         ↓
 [Portal] → reads from DuckDB API → entity browser + change requests
 ```

@@ -13,9 +13,9 @@ chronos_seat:
       # Using `attach` so all schemas (bronze, silver, gold) live inside
       # the DuckLake catalog — not as ghost schemas in DuckDB's main db.
       attach:
-        - path: "ducklake:dbt_project/data/gold/chronos.ducklake"
+        - path: "ducklake:dbt_project/data/chronos.ducklake"
           alias: chronos
           options:
-            data_path: dbt_project/data/gold/chronos.ducklake.files
+            data_path: dbt_project/data/chronos.ducklake.files
       database: chronos
       threads: 4
