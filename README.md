@@ -31,7 +31,7 @@ A local-first data lakehouse for mapping, tracking, and visualizing position lif
 - `silver` — cleaned, deduplicated, conformed dimensions
 - `gold` — business-ready star schema (dims + facts) consumed by Rill
 
-All three schemas live inside a single DuckLake catalog (`dbt_project/data/gold/chronos.ducklake`) using the `attach` pattern, giving every layer Parquet-backed storage and snapshot history.
+All three schemas live inside a single DuckLake catalog (`dbt_project/data/chronos.ducklake`) using the `attach` pattern, giving every layer Parquet-backed storage and snapshot history.
 
 ## Quick Start
 
@@ -92,7 +92,7 @@ chronos-seat/
 ├── data/
 │   ├── raw/                    # Bronze: CSV, Parquet, Excel from Dagster
 │   ├── silver/                 # Silver: cleaned Parquet from Polars transforms
-│   └── gold/                   # Gold: DuckLake catalog + Parquet files
+│   └── gold/                   # Gold: business-ready Parquet (consumed by Rill)
 ├── src/chronos_seat/
 │   ├── definitions.py          # Root Dagster Definitions
 │   └── defs/
