@@ -1,0 +1,9 @@
+change_type_sk,change_type_name,change_type_category,description,is_active
+NEW_HIRE,New Hire,STAFFING,Employee newly assigned to a position,true
+EXIT,Exit,STAFFING,Employee leaves a position,true
+CONTRACTOR_OVERLAP,Contractor Overlap,STAFFING,Contractor added to occupied position,true
+VACANCY,Vacancy,STAFFING,Position becomes vacant,true
+TRANSITION,Transition,STAFFING,Employee moves to different position,true
+TITLE_CHANGE,Title Change,STRUCTURE,Position title changes,true
+SALARY_CHANGE,Salary Change,FINANCIAL,Salary band adjustment,true
+LOCATION_CHANGE,Location Change,STRUCTURE,Position location changes,true

@@ -1,12 +1,9 @@
 """Custom Python transformations — Bronze to Silver cleaning."""
 
 from datetime import date
-from pathlib import Path
-
+import duckdb
 import polars as pl
 from dagster import AssetExecutionContext, AssetIn, asset
-
-SILVER_PATH = Path("data/silver")
 
 
 @asset(
@@ -18,8 +15,6 @@ def silver_erp_roster(
     context: AssetExecutionContext, mock_erp_roster: pl.DataFrame
 ) -> pl.DataFrame:
     """Standardize column names, types, and casing from ERP roster."""
-    SILVER_PATH.mkdir(parents=True, exist_ok=True)
-
     df = mock_erp_roster.with_columns(
         pl.col("hire_date").str.strptime(pl.Date, "%Y-%m-%d"),
         pl.col("termination_date")
@@ -29,9 +24,9 @@ def silver_erp_roster(
         pl.col("employee_name").str.to_titlecase(),
     )
 
-    output_path = SILVER_PATH / f"erp_roster_{date.today().isoformat()}.parquet"
-    df.write_parquet(str(output_path))
-    context.log.info(f"Wrote Silver ERP roster: {output_path}")
+    conn = duckdb.connect("ducklake:./data/chronos.ducklake")
+    conn.execute("Create table if not exists silver.erp_roster as select * from df")
+    context.log.info("Wrote Silver ERP roster to DuckLake")
     return df
 
 
@@ -44,8 +39,6 @@ def silver_hr_allocations(
     context: AssetExecutionContext, mock_hr_allocations: pl.DataFrame
 ) -> pl.DataFrame:
     """Fix messy casing and standardize HR allocation data."""
-    SILVER_PATH.mkdir(parents=True, exist_ok=True)
-
     df = mock_hr_allocations.rename(
         {
             "emp_id": "employee_id",
@@ -71,7 +64,7 @@ def silver_hr_allocations(
         .alias("assignment_end"),
     )
 
-    output_path = SILVER_PATH / f"hr_allocations_{date.today().isoformat()}.parquet"
-    df.write_parquet(str(output_path))
-    context.log.info(f"Wrote Silver HR allocations: {output_path}")
+    conn = duckdb.connect("ducklake:./data/chronos.ducklake")
+    conn.execute("Create table if not exists silver.hr_allocations as select * from df")
+    context.log.info("Wrote Silver HR allocations to DuckLake")
     return df

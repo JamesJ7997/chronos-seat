@@ -1,16 +1,10 @@
 """Mock data generator — creates realistic HR data for Bronze layer."""
 
-from datetime import date, datetime
-from pathlib import Path
-
+from datetime import datetime
+import duckdb
 import polars as pl
 from dagster import AssetExecutionContext, asset
-
-RAW_PATH = Path("data/raw")
-
-
-def _ensure_dir():
-    RAW_PATH.mkdir(parents=True, exist_ok=True)
+from pathlib import Path
 
 
 def _timestamp() -> str:
@@ -20,59 +14,102 @@ def _timestamp() -> str:
 @asset(group_name="ingestion", description="Generate mock ERP roster CSV")
 def mock_erp_roster(context: AssetExecutionContext) -> pl.DataFrame:
     """Raw ERP dump — clean, consistent format."""
-    _ensure_dir()
-
     data = {
         "employee_id": [f"EMP-{i:03d}" for i in range(1, 9)],
         "employee_name": [
-            "Alice Johnson", "Bob Smith", "Carol Williams", "David Brown",
-            "Eve Davis", "Frank Miller", "Grace Lee", "Henry Wilson",
+            "Alice Johnson",
+            "Bob Smith",
+            "Carol Williams",
+            "David Brown",
+            "Eve Davis",
+            "Frank Miller",
+            "Grace Lee",
+            "Henry Wilson",
         ],
         "employee_type": [
-            "FULL-TIME", "FULL-TIME", "CONTRACTOR", "FULL-TIME",
-            "FULL-TIME", "FULL-TIME", "CONTRACTOR", "FULL-TIME",
+            "FULL-TIME",
+            "FULL-TIME",
+            "CONTRACTOR",
+            "FULL-TIME",
+            "FULL-TIME",
+            "FULL-TIME",
+            "CONTRACTOR",
+            "FULL-TIME",
         ],
         "position_id": [
-            "POS-1001", "POS-1002", "POS-1003", "POS-1004",
-            "POS-1005", "POS-1006", "POS-1002", "POS-1007",
+            "POS-1001",
+            "POS-1002",
+            "POS-1003",
+            "POS-1004",
+            "POS-1005",
+            "POS-1006",
+            "POS-1002",
+            "POS-1007",
         ],
         "position_title": [
-            "Sr. Data Engineer", "Data Analyst", "ML Engineer", "Analytics Engineer",
-            "Data Engineer", "Staff Engineer", "Data Analyst", "VP Engineering",
+            "Sr. Data Engineer",
+            "Data Analyst",
+            "ML Engineer",
+            "Analytics Engineer",
+            "Data Engineer",
+            "Staff Engineer",
+            "Data Analyst",
+            "VP Engineering",
         ],
         "department_id": [
-            "DEPT-ENG", "DEPT-ENG", "DEPT-AIML", "DEPT-DATA",
-            "DEPT-ENG", "DEPT-ENG", "DEPT-ENG", "DEPT-ENG",
+            "DEPT-ENG",
+            "DEPT-ENG",
+            "DEPT-AIML",
+            "DEPT-DATA",
+            "DEPT-ENG",
+            "DEPT-ENG",
+            "DEPT-ENG",
+            "DEPT-ENG",
         ],
         "department_name": [
-            "Engineering", "Engineering", "AI/ML", "Data",
-            "Engineering", "Engineering", "Engineering", "Engineering",
+            "Engineering",
+            "Engineering",
+            "AI/ML",
+            "Data",
+            "Engineering",
+            "Engineering",
+            "Engineering",
+            "Engineering",
         ],
         "cost_center": [
-            "CC-5100", "CC-5100", "CC-5200", "CC-5300",
-            "CC-5100", "CC-5100", "CC-5100", "CC-5100",
+            "CC-5100",
+            "CC-5100",
+            "CC-5200",
+            "CC-5300",
+            "CC-5100",
+            "CC-5100",
+            "CC-5100",
+            "CC-5100",
         ],
         "hire_date": [
-            "2021-03-15", "2022-07-01", "2024-01-10", "2023-06-20",
-            "2020-11-08", "2019-04-22", "2025-06-01", "2018-01-15",
+            "2021-03-15",
+            "2022-07-01",
+            "2024-01-10",
+            "2023-06-20",
+            "2020-11-08",
+            "2019-04-22",
+            "2025-06-01",
+            "2018-01-15",
         ],
         "termination_date": ["", "", "", "", "", "", "", ""],
         "source_system": ["ERP"] * 8,
     }
 
     df = pl.DataFrame(data)
-    output_path = RAW_PATH / date.today().isoformat() / f"erp_roster_{_timestamp()}.csv"
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    df.write_csv(str(output_path))
-    context.log.info(f"Wrote ERP roster: {output_path}")
+    conn = duckdb.connect("ducklake:./data/chronos.ducklake")
+    conn.execute("Create table if not exists bronze.erp_roster as select * from df")
+    context.log.info("Wrote ERP roster to bronze schema")
     return df
 
 
 @asset(group_name="ingestion", description="Generate mock HR allocations Parquet")
 def mock_hr_allocations(context: AssetExecutionContext) -> pl.DataFrame:
     """HR allocation list — messy casing, variable strings."""
-    _ensure_dir()
-
     data = {
         "emp_id": ["EMP-001", "EMP-002", "EMP-007", "EMP-003"],
         "EmpName": ["alice johnson", "bob smith", "grace lee", "carol williams"],
@@ -85,18 +122,15 @@ def mock_hr_allocations(context: AssetExecutionContext) -> pl.DataFrame:
     }
 
     df = pl.DataFrame(data)
-    output_path = RAW_PATH / date.today().isoformat() / f"hr_allocations_{_timestamp()}.parquet"
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    df.write_parquet(str(output_path))
-    context.log.info(f"Wrote HR allocations: {output_path}")
+    conn = duckdb.connect("ducklake:./data/chronos.ducklake")
+    conn.execute("Create table if not exists bronze.hr_allocations as select * from df")
+    context.log.info("Wrote HR allocations to bronze schema")
     return df
 
 
 @asset(group_name="ingestion", description="Generate mock contractor tracking Excel")
 def mock_contractor_tracking(context: AssetExecutionContext) -> pl.DataFrame:
     """Contractor tracking log — Excel with overlapping dates."""
-    _ensure_dir()
-
     data = {
         "contractor_id": ["EMP-003", "EMP-007"],
         "contractor_name": ["Carol Williams", "Grace Lee"],
@@ -107,8 +141,9 @@ def mock_contractor_tracking(context: AssetExecutionContext) -> pl.DataFrame:
     }
 
     df = pl.DataFrame(data)
-    output_path = RAW_PATH / date.today().isoformat() / f"contractor_tracking_{_timestamp()}.xlsx"
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    df.write_excel(str(output_path))
-    context.log.info(f"Wrote contractor tracking: {output_path}")
+    conn = duckdb.connect("ducklake:./data/chronos.ducklake")
+    conn.execute(
+        "Create table if not exists bronze.contractor_tracking as select * from df"
+    )
+    context.log.info("Wrote contractor tracking to bronze schema")
     return df

@@ -13,9 +13,10 @@ chronos_seat:
       # Using `attach` so all schemas (bronze, silver, gold) live inside
       # the DuckLake catalog — not as ghost schemas in DuckDB's main db.
       attach:
-        - path: "ducklake:dbt_project/data/chronos.ducklake"
+        - path: "ducklake:{{ env_var('DUCKLAKE_PATH', '../data/chronos.ducklake') }}"
           alias: chronos
           options:
-            data_path: dbt_project/data/chronos.ducklake.files
+            data_path: "{{ env_var('DUCKLAKE_DATA_PATH', '../data/chronos.ducklake.files') }}"
+            override_data_path: true
       database: chronos
       threads: 4

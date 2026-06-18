@@ -1,0 +1,4 @@
+department_sk,department_id,department_name,division,cost_center_lead,is_active
+DEPT-ENG,DEPT-ENG,Engineering,Technology,Henry Wilson,true
+DEPT-AIML,DEPT-AIML,AI/ML,Technology,Frank Miller,true
+DEPT-DATA,DEPT-DATA,Data,Technology,Alice Johnson,true

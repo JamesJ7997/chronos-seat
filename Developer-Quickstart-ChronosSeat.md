@@ -4,33 +4,37 @@
 > **Audience**: Developer who will write all code themselves.
 > **Prerequisites**: WSL2 Ubuntu, Python 3.13, Node.js 18+, Docker + Docker Compose, Rill Developer. Basic familiarity with DuckDB/dbt/Dagster concepts.
 > **Time estimate**: 4-6 hours for a working local demo.
-> **Last updated**: 2026-06-15 — v3. Fixed all v1 blockers + 7 v2 blockers (security, missing assets, CI, wiring).
+> **Last updated**: 2026-06-17 — v5. DuckLake is now the single catalog for all layers. Raw/silver/gold all live in DuckLake. Dagster assets write to bronze/silver schemas. dbt staging reads from bronze, marts write to gold. Removed data/{raw,silver,gold}/ folders.
 
 ---
 
 ## Table of Contents
 
-1. [Environment Setup](#1-environment-setup)
-2. [Project Scaffolding](#2-project-scaffolding)
-3. [Configuration Files](#3-configuration-files)
-4. [Mock Data Generator](#4-mock-data-generator)
-5. [Dagster Orchestration](#5-dagster-orchestration)
-6. [dbt Transformation Layer](#6-dbt-transformation-layer)
-7. [Rill Dashboards](#7-rill-dashboards)
-8. [Change Request System](#8-change-request-system)
-9. [Entity Management System](#9-entity-management-system)
-10. [Web Portal](#10-web-portal)
-11. [Docker Deployment](#11-docker-deployment)
-12. [Testing](#12-testing)
-13. [Network Access](#13-network-access)
-14. [Scaling Path](#14-scaling-path)
-15. [Quick Reference — Run Everything](#15-quick-reference--run-everything-locally)
+1. [[#1. Environment Setup]]
+2. [[#2. Project Scaffolding]]
+3. [[#3. Configuration Files]]
+4. [[#4. Mock Data Generator]]
+5. [[#5. Dagster Orchestration]]
+6. [[#6. dbt Transformation Layer]]
+7. [[#7. Rill Dashboards]]
+8. [[#8. Change Request System]]
+9. [[#9. Entity Management System]]
+10. [[#10. Web Portal]]
+11. [[#11. Docker Deployment]]
+12. [[#12. Testing]]
+13. [[#13. Network Access]]
+14. [[#14. Scaling Path]]
+15. [[#15. Quick Reference — Run Everything]]
 
 ---
 
 ## 1. Environment Setup
 
+→ [[#Table of Contents]]
+
 ### 1.1 Install uv
+
+→ [[#1. Environment Setup]]
 
 ```bash
 curl -LsSf https://astral.sh/uv/install.sh | sh
@@ -38,6 +42,8 @@ source $HOME/.local/bin/env
 ```
 
 ### 1.2 Create Project Workspace
+
+→ [[#1. Environment Setup]]
 
 ```bash
 cd ~/workspace/projects
@@ -49,11 +55,15 @@ uv add dagster dagster-webserver dagster-dbt dagster-duckdb dbt-core dbt-duckdb 
 
 ### 1.3 Install Rill
 
+→ [[#1. Environment Setup]]
+
 ```bash
 curl -s https://rill.sh | sh
 ```
 
 ### 1.4 Verify Installations
+
+→ [[#1. Environment Setup]]
 
 ```bash
 uv --version
@@ -67,6 +77,8 @@ duckdb --version
 
 ## 2. Project Scaffolding
 
+→ [[#Table of Contents]]
+
 Run this script from the project root:
 
 ```bash
@@ -76,8 +88,10 @@ set -e
 
 echo "🚀 Scaffolding ChronosSeat directory structure..."
 
-# Data directories
-mkdir -p data/{raw,silver,gold}
+# DuckLake data directory (single storage for all layers)
+mkdir -p data
+
+# Request/approval workflow directories
 mkdir -p data/change_requests/{inbox,approved,rejected,processing,archive}
 mkdir -p data/entity_requests/{inbox,approved,rejected,processing,archive}
 
@@ -116,7 +130,7 @@ touch {workspace.yaml,Makefile,pyproject.toml,README.md}
 touch queries/scratchpad.sql
 
 # Ensure data dirs are tracked by git
-touch data/{raw,silver,gold}/.gitkeep
+touch data/.gitkeep
 touch data/change_requests/{inbox,approved,rejected,processing,archive}/.gitkeep
 touch data/entity_requests/{inbox,approved,rejected,processing,archive}/.gitkeep
 
@@ -130,7 +144,11 @@ echo "✅ Directory structure created."
 
 ## 3. Configuration Files
 
+→ [[#Table of Contents]]
+
 ### 3.1 pyproject.toml
+
+→ [[#3. Configuration Files]]
 
 ```toml
 # ============================================================
@@ -241,6 +259,8 @@ registry_modules = [
 
 ### 3.2 dagster.yaml
 
+→ [[#3. Configuration Files]]
+
 > **Location**: `dagster_home/dagster.yaml` — inside the `dagster_home/` directory, not at the project root.
 > Dagster reads this file from `$DAGSTER_HOME/dagster.yaml` at startup.
 
@@ -276,6 +296,8 @@ telemetry:
 
 ### 3.3 workspace.yaml
 
+→ [[#3. Configuration Files]]
+
 ```yaml
 # ============================================================
 # Dagster workspace config — tells Dagster where to find code.
@@ -287,6 +309,8 @@ load_from:
 ```
 
 ### 3.4 dbt_project/dbt_project.yml
+
+→ [[#3. Configuration Files]]
 
 ```yaml
 # ============================================================
@@ -321,7 +345,7 @@ clean-targets:                 # Directories cleaned by `dbt clean`
 # be in gold — not bronze or a separate reference schema.
 seeds:
   chronos_seat:
-    +schema: gold             # dim_date, dim_change_type, dim_change_reason, dim_department
+    +schema: gold             # dim_change_type, dim_change_reason, dim_department (dim_date is a dbt model, not a seed)
 
 # --- Model materialization defaults by Medallion layer ---
 # bronze  = 1:1 views over raw data (lightweight, always current)
@@ -331,16 +355,18 @@ models:
   chronos_seat:
     bronze:
       +materialized: view      # Bronze models are views: lightweight, always reflect latest raw data
-      +schema: bronze          # Bronze tables go into the "bronze" schema (matches data/raw/ folder)
+      +schema: bronze          # Bronze schema in DuckLake (raw ingestion layer)
     silver:
       +materialized: incremental  # Silver models are incremental: append new rows, don't rebuild
-      +schema: silver          # Silver tables go into the "silver" schema (matches data/silver/ folder)
+      +schema: silver          # Silver schema in DuckLake (cleaned/transformed layer)
     gold:
       +materialized: table     # Gold models are full tables: rebuilt each run for clean dimensional data
-      +schema: gold            # Gold tables go into the "gold" schema (matches data/gold/ folder, what Rill reads)
+      +schema: gold            # Gold schema in DuckLake (dimensional models, what Rill reads)
 ```
 
 ### 3.5 dbt_project/profiles.yml
+
+→ [[#3. Configuration Files]]
 
 ```yaml
 # ============================================================
@@ -354,19 +380,23 @@ chronos_seat:
       type: duckdb
       extensions:
         - ducklake
-      # DuckLake: .ducklake file = catalog metadata, .ducklake.files/ = Parquet data.
+      # ducklake:.ducklake file = catalog metadata, .ducklake.files/ = Parquet data.
       # Using `attach` so all schemas (bronze, silver, gold) live inside
       # the DuckLake catalog — not as ghost schemas in DuckDB's main db.
+      # Path is relative to the dbt_project/ directory (where dbt runs from).
       attach:
-        - path: "ducklake:dbt_project/data/chronos.ducklake"
+        - path: "ducklake:../data/chronos.ducklake"
           alias: chronos
           options:
-            data_path: dbt_project/data/chronos.ducklake.files
+            data_path: ../data/chronos.ducklake.files
+            override_data_path: true  # Required when reusing an existing DuckLake catalog created with a different path string
       database: chronos
       threads: 4
 ```
 
 ### 3.6 dbt_project/packages.yml
+
+→ [[#3. Configuration Files]]
 
 ```yaml
 # ============================================================
@@ -379,6 +409,8 @@ packages:
 ```
 
 ### 3.7 .env
+
+→ [[#3. Configuration Files]]
 
 ```bash
 # ============================================================
@@ -404,6 +436,8 @@ DAGSTER_HOME=/home/wolfj/workspace/projects/chronos-seat/dagster_home  # Dagster
 
 ### 3.8 .gitignore
 
+→ [[#3. Configuration Files]]
+
 ```
 # ============================================================
 # Git ignore rules — prevents generated files, secrets, and
@@ -411,13 +445,11 @@ DAGSTER_HOME=/home/wolfj/workspace/projects/chronos-seat/dagster_home  # Dagster
 # ============================================================
 
 # --- Data files (generated by pipeline, not source-controlled) ---
-data/raw/*           # Bronze layer: raw CSV/Parquet/Excel ingested by Dagster
-data/silver/*        # Silver layer: cleaned Parquet files from ad-hoc transforms
-data/gold/*          # Gold layer: DuckDB dimensional models (rebuilt by dbt)
-!*/.gitkeep          # Except .gitkeep files (preserve empty directory structure in git)
-*.duckdb             # DuckDB database files (binary, large, rebuilt by pipeline)
-*.duckdb.wal         # DuckDB write-ahead log (temporary, rebuilt)
-*.parquet            # Parquet files (generated by Dagster/dbt, not source-controlled)
+data/chronos.ducklake          # DuckLake catalog (metadata)
+data/chronos.ducklake.files/   # DuckLake table data (Parquet files for all layers)
+!data/.gitkeep                 # Except .gitkeep (preserve directory structure in git)
+*.duckdb                       # DuckDB database files (rebuilt by pipeline)
+*.duckdb.wal                   # DuckDB write-ahead log (temporary)
 
 # --- Python artifacts ---
 .venv/               # uv virtual environment (rebuilt by `uv sync`)
@@ -451,6 +483,8 @@ Thumbs.db            # Windows thumbnail cache
 
 ### 3.9 .dockerignore
 
+→ [[#3. Configuration Files]]
+
 ```
 # ============================================================
 # Docker ignore rules — prevents unnecessary files from being
@@ -464,9 +498,6 @@ __pycache__/         # Python bytecode cache
 *.pyc                # Compiled Python files
 .env                 # Environment variables (injected at runtime, not baked in)
 .env.local           # Local env overrides (injected at runtime)
-data/raw/*           # Bronze data (generated inside container or mounted as volume)
-data/silver/*        # Silver data (generated inside container or mounted as volume)
-data/gold/*          # Gold data (generated inside container or mounted as volume)
 !.gitkeep            # Keep .gitkeep to preserve directory structure in the image
 tests/               # Test files (not needed in production image)
 *.md                 # Documentation (not needed in production image)
@@ -476,9 +507,13 @@ tests/               # Test files (not needed in production image)
 
 ## 4. Mock Data Generator
 
+→ [[#Table of Contents]]
+
 ### 4.1 Sample Raw Data Format
 
-**ERP Roster** (`data/raw/YYYY-MM-DD/erp_roster_TIMESTAMP.csv`):
+→ [[#4. Mock Data Generator]]
+
+**ERP Roster** (`bronze.erp_roster` table in DuckLake):
 
 ```csv
 employee_id,employee_name,employee_type,position_id,position_title,department_id,department_name,cost_center,hire_date,termination_date,source_system
@@ -492,7 +527,7 @@ EMP-007,Grace Lee,CONTRACTOR,POS-1002,Data Analyst,DEPT-ENG,Engineering,CC-5100,
 EMP-008,Henry Wilson,FULL-TIME,POS-1007,VP Engineering,DEPT-ENG,Engineering,CC-5100,2018-01-15,,ERP
 ```
 
-**HR Allocations** (`data/raw/YYYY-MM-DD/hr_allocations_TIMESTAMP.parquet`):
+**HR Allocations** (`bronze.hr_allocations` table in DuckLake):
 
 | emp_id | EmpName | pos_id | PosTitle | dept_code | alloc_factor | start_dt | end_dt |
 |--------|---------|--------|----------|-----------|-------------|----------|--------|
@@ -501,7 +536,7 @@ EMP-008,Henry Wilson,FULL-TIME,POS-1007,VP Engineering,DEPT-ENG,Engineering,CC-5
 | EMP-007 | grace lee | POS-1002 | data analyst | DEPT-ENG | 0.5 | 2025-06-01 | |
 | EMP-003 | carol williams | POS-1003 | ml engineer | DEPT-AIML | 1.0 | 2024-01-10 | |
 
-**Contractor Tracking** (`data/raw/YYYY-MM-DD/contractor_tracking_TIMESTAMP.xlsx`):
+**Contractor Tracking** (`bronze.contractor_tracking` table in DuckLake):
 
 | contractor_id | contractor_name | position_id | start_date | end_date | rate_type |
 |---------------|-----------------|-------------|------------|----------|-----------|
@@ -510,32 +545,28 @@ EMP-008,Henry Wilson,FULL-TIME,POS-1007,VP Engineering,DEPT-ENG,Engineering,CC-5
 
 ### 4.2 Mock Data Assets
 
-**src/chronos_seat/defs/ingestion/rawgen/assets.py**:
+→ [[#4. Mock Data Generator]]
+
+> **Note**: These assets write directly to DuckLake bronze tables. In production, file-based ingestion assets (§4.3) replace these.
+
+**src/chronos_seat/defs/ingestion/rawgen/assets.py** — Mock data generators — creates synthetic ERP, HR, and contractor data for development. Writes directly to DuckLake bronze tables. Production uses file-based ingestion (section 4.3).
 
 ```python
 """Mock data generator — creates realistic HR data for Bronze layer."""
 
+from datetime import datetime
+import duckdb
 import polars as pl
-from pathlib import Path
-from datetime import date, datetime
-from dagster import asset, AssetExecutionContext
-
-RAW_PATH = Path("data/raw")
-
-
-def _ensure_dir():
-    RAW_PATH.mkdir(parents=True, exist_ok=True)
+from dagster import AssetExecutionContext, asset
 
 
 def _timestamp() -> str:
     return datetime.now().strftime("%Y%m%d_%H%M%S")
 
 
-@asset(group_name="ingestion", description="Generate mock ERP roster CSV")
+@asset(group_name="ingestion", description="Generate mock ERP roster")
 def mock_erp_roster(context: AssetExecutionContext) -> pl.DataFrame:
-    """Raw ERP dump — clean, consistent format."""
-    _ensure_dir()
-
+    """Raw ERP dump — clean, consistent format. Writes to DuckLake bronze schema."""
     data = {
         "employee_id": [f"EMP-{i:03d}" for i in range(1, 9)],
         "employee_name": [
@@ -575,18 +606,17 @@ def mock_erp_roster(context: AssetExecutionContext) -> pl.DataFrame:
     }
 
     df = pl.DataFrame(data)
-    output_path = RAW_PATH / date.today().isoformat() / f"erp_roster_{_timestamp()}.csv"
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    df.write_csv(str(output_path))
-    context.log.info(f"Wrote ERP roster: {output_path}")
+    # Path is relative, no spaces after ':'
+    # Since we start Dagster from the project root, path starts with "data" folder
+    conn = duckdb.connect("ducklake:./data/chronos.ducklake")
+    conn.execute("CREATE TABLE IF NOT EXISTS bronze.erp_roster AS SELECT * FROM df")
+    context.log.info("Wrote ERP roster to bronze.erp_roster")
     return df
 
 
-@asset(group_name="ingestion", description="Generate mock HR allocations Parquet")
+@asset(group_name="ingestion", description="Generate mock HR allocations")
 def mock_hr_allocations(context: AssetExecutionContext) -> pl.DataFrame:
-    """HR allocation list — messy casing, variable strings."""
-    _ensure_dir()
-
+    """HR allocation list — messy casing, variable strings. Writes to DuckLake bronze schema."""
     data = {
         "emp_id": ["EMP-001", "EMP-002", "EMP-007", "EMP-003"],
         "EmpName": ["alice johnson", "bob smith", "grace lee", "carol williams"],
@@ -599,18 +629,17 @@ def mock_hr_allocations(context: AssetExecutionContext) -> pl.DataFrame:
     }
 
     df = pl.DataFrame(data)
-    output_path = RAW_PATH / date.today().isoformat() / f"hr_allocations_{_timestamp()}.parquet"
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    df.write_parquet(str(output_path))
-    context.log.info(f"Wrote HR allocations: {output_path}")
+    # Path is relative, no spaces after ':'
+    # Since we start Dagster from the project root, path starts with "data" folder
+    conn = duckdb.connect("ducklake:./data/chronos.ducklake")
+    conn.execute("CREATE TABLE IF NOT EXISTS bronze.hr_allocations AS SELECT * FROM df")
+    context.log.info("Wrote HR allocations to bronze.hr_allocations")
     return df
 
 
-@asset(group_name="ingestion", description="Generate mock contractor tracking Excel")
+@asset(group_name="ingestion", description="Generate mock contractor tracking")
 def mock_contractor_tracking(context: AssetExecutionContext) -> pl.DataFrame:
-    """Contractor tracking log — Excel with overlapping dates."""
-    _ensure_dir()
-
+    """Contractor tracking log — Excel with overlapping dates. Writes to DuckLake bronze schema."""
     data = {
         "contractor_id": ["EMP-003", "EMP-007"],
         "contractor_name": ["Carol Williams", "Grace Lee"],
@@ -621,16 +650,21 @@ def mock_contractor_tracking(context: AssetExecutionContext) -> pl.DataFrame:
     }
 
     df = pl.DataFrame(data)
-    output_path = RAW_PATH / date.today().isoformat() / f"contractor_tracking_{_timestamp()}.xlsx"
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    df.write_excel(str(output_path))
-    context.log.info(f"Wrote contractor tracking: {output_path}")
+    # Path is relative, no spaces after ':'
+    # Since we start Dagster from the project root, path starts with "data" folder
+    conn = duckdb.connect("ducklake:./data/chronos.ducklake")
+    conn.execute("CREATE TABLE IF NOT EXISTS bronze.contractor_tracking AS SELECT * FROM df")
+    context.log.info("Wrote contractor tracking to bronze.contractor_tracking")
     return df
 ```
 
+> **Why write to DuckLake instead of flat files?** DuckLake is the single catalog for the entire lakehouse. Raw data lives in bronze tables, cleaned data in silver tables, and dimensional models in gold tables — all inside one catalog. This gives every layer ACID compliance, snapshot history, and time-travel. The old approach of writing CSV/Parquet to `data/raw/` and `data/silver/` meant those files were outside the catalog and couldn't benefit from DuckLake's features.
+
 ### 4.3 Resources
 
-**src/chronos_seat/defs/ingestion/rawgen/resources.py**:
+→ [[#4. Mock Data Generator]]
+
+**src/chronos_seat/defs/ingestion/rawgen/resources.py** — DuckDBResource — provides a shared DuckDB connection to all Dagster assets. Uses `ducklake: ./data/chronos.ducklake` to connect to the DuckLake catalog.
 
 ```python
 """Shared resources for ingestion."""
@@ -642,11 +676,13 @@ from dagster_duckdb import DuckDBResource  # Built-in Dagster-DuckDB integration
 # All schemas (bronze, silver, gold) live inside the DuckLake catalog via the
 # attach pattern in dbt_project/profiles.yml. Dagster connects directly via ducklake: URI.
 duckdb_resource = DuckDBResource(
-    database="ducklake:./dbt_project/data/chronos.ducklake",  # DuckLake catalog (ducklake: URI)
+    database="ducklake:./data/chronos.ducklake",  # DuckLake catalog at project root (ducklake: URI)
 )
 ```
 
 ### 4.5 Definitions
+
+→ [[#4. Mock Data Generator]]
 
 **src/chronos_seat/definitions.py** — start with just the mock data assets:
 
@@ -671,10 +707,15 @@ defs = Definitions(
 
 ### 4.6 Running the Mock Data Assets
 
+→ [[#4. Mock Data Generator]]
+
 After writing the code files in sections 4.2, 4.3, and 5.1, materialize the mock data assets:
 
 ```bash
 cd ~/workspace/projects/chronos-seat
+
+# Make sure the "bronze" schema exists prior to running the mock ingestions
+duckdb "ducklake:./data/chronos.ducklake" -c "CREATE SCHEMA if not exists bronze;"
 
 # Start Dagster — dg dev starts BOTH the webserver and daemon.
 uv run dg dev -h 0.0.0.0 -p 2320
@@ -691,17 +732,19 @@ uv run dg launch --assets "*"
 Verify raw files were created:
 
 ```bash
-ls -la data/raw/$(date +%Y-%m-%d)/
-# Should show: erp_roster_*.csv, hr_allocations_*.parquet, contractor_tracking_*.xlsx
+duckdb "ducklake:./data/chronos.ducklake" -c "SELECT table_name, count(*) as row_count FROM information_schema.tables WHERE table_schema = 'bronze' GROUP BY table_name"
+# Should show: erp_roster, hr_allocations, contractor_tracking
 ```
 
 At this point you have a working Dagster project with 3 mock assets. The following sections add the remaining assets, sensors, and transformations — each section will update `definitions.py` to include what was just built.
 
 ### 4.7 CI/CD — Set Up Continuous Integration
 
+→ [[#4. Mock Data Generator]]
+
 Now that you have working code, set up CI/CD so every push is automatically validated.
 
-**.github/workflows/ci.yml**:
+**.github/workflows/ci.yml** — GitHub Actions CI pipeline — runs lint (ruff), tests (pytest), and dbt build on every push/PR.
 
 ```yaml
 # ============================================================
@@ -778,7 +821,7 @@ jobs:
 
 ```
 
-**.pre-commit-config.yaml**:
+**.pre-commit-config.yaml** — Pre-commit hooks — ruff linting, trailing whitespace, YAML validation, debug statement checks.
 
 ```yaml
 # ============================================================
@@ -836,9 +879,13 @@ git push origin main
 
 ## 5. Dagster Orchestration
 
+→ [[#Table of Contents]]
+
 ### 5.1 dbt Assets
 
-**src/chronos_seat/defs/transformation/dbt/project.py**:
+→ [[#5. Dagster Orchestration]]
+
+**src/chronos_seat/defs/transformation/dbt/project.py** — DbtProject configuration — tells Dagster where the dbt project lives (`dbt_project/`) and how to invoke it.
 ```python
 """Shared DbtProject instance — used by both assets and resources."""
 
@@ -855,7 +902,7 @@ dbt_project.prepare_if_dev()  # Generates manifest.json in dev
 
 ```
 
-**src/chronos_seat/defs/transformation/dbt/assets.py**:
+**src/chronos_seat/defs/transformation/dbt/assets.py** — dbt asset definitions — loads all dbt models from `manifest.json` and creates Dagster assets for each. Enables Dagster to orchestrate dbt runs.
 ```python
 """Dagster-dbt integration — wraps dbt models as Dagster assets using DbtProject."""
 
@@ -873,7 +920,7 @@ def dbt_models(context: AssetExecutionContext, dbt: DbtCliResource):
 ```
 
 
-**src/chronos_seat/defs/transformation/dbt/resources.py**:
+**src/chronos_seat/defs/transformation/dbt/resources.py** — DbtCliResource — the Dagster resource that invokes `dbt` CLI commands. Configured with the project directory and profiles directory.
 ```python
 """dbt resource — DbtCliResource pointing to the DbtProject directory."""
 
@@ -923,18 +970,15 @@ defs = Definitions(
 
 ### 5.2 Ad-Hoc Silver Transforms
 
-**src/chronos_seat/defs/transformation/adhoc/assets.py**:
+→ [[#5. Dagster Orchestration]]
+
+**src/chronos_seat/defs/transformation/adhoc/assets.py** — Silver transforms — Python-based Dagster assets that read from bronze tables, clean/conform data with Polars, and write to silver tables.
 
 ```python
 """Custom Python transformations — Bronze to Silver cleaning."""
 
-from datetime import date
-from pathlib import Path
-
 import polars as pl
 from dagster import AssetExecutionContext, AssetIn, asset
-
-SILVER_PATH = Path("data/silver")
 
 
 @asset(
@@ -945,9 +989,7 @@ SILVER_PATH = Path("data/silver")
 def silver_erp_roster(
     context: AssetExecutionContext, mock_erp_roster: pl.DataFrame
 ) -> pl.DataFrame:
-    """Standardize column names, types, and casing from ERP roster."""
-    SILVER_PATH.mkdir(parents=True, exist_ok=True)
-
+    """Standardize column names, types, and casing from ERP roster. Writes to DuckLake silver schema."""
     df = mock_erp_roster.with_columns(
         pl.col("hire_date").str.strptime(pl.Date, "%Y-%m-%d"),
         pl.col("termination_date")
@@ -957,9 +999,9 @@ def silver_erp_roster(
         pl.col("employee_name").str.to_titlecase(),
     )
 
-    output_path = SILVER_PATH / f"erp_roster_{date.today().isoformat()}.parquet"
-    df.write_parquet(str(output_path))
-    context.log.info(f"Wrote Silver ERP roster: {output_path}")
+    conn = duckdb.connect("ducklake:./data/chronos.ducklake")
+    conn.execute("CREATE TABLE IF NOT EXISTS silver.erp_roster AS SELECT * FROM df")
+    context.log.info("Wrote Silver ERP roster to silver.erp_roster")
     return df
 
 
@@ -971,9 +1013,7 @@ def silver_erp_roster(
 def silver_hr_allocations(
     context: AssetExecutionContext, mock_hr_allocations: pl.DataFrame
 ) -> pl.DataFrame:
-    """Fix messy casing and standardize HR allocation data."""
-    SILVER_PATH.mkdir(parents=True, exist_ok=True)
-
+    """Fix messy casing and standardize HR allocation data. Writes to DuckLake silver schema."""
     df = mock_hr_allocations.rename(
         {
             "emp_id": "employee_id",
@@ -999,11 +1039,44 @@ def silver_hr_allocations(
         .alias("assignment_end"),
     )
 
-    output_path = SILVER_PATH / f"hr_allocations_{date.today().isoformat()}.parquet"
-    df.write_parquet(str(output_path))
-    context.log.info(f"Wrote Silver HR allocations: {output_path}")
+    conn = duckdb.connect("ducklake:./data/chronos.ducklake")
+    conn.execute("CREATE TABLE IF NOT EXISTS silver.hr_allocations AS SELECT * FROM df")
+    context.log.info("Wrote Silver HR allocations to silver.hr_allocations")
     return df
 
+
+@asset(
+    group_name="transformation",
+    ins={"mock_contractor_tracking": AssetIn(key="mock_contractor_tracking")},
+    description="Clean and standardize contractor tracking to Silver",
+)
+def silver_contractor_tracking(
+    context: AssetExecutionContext, mock_contractor_tracking: pl.DataFrame
+) -> pl.DataFrame:
+    """Standardize contractor tracking data. Writes to DuckLake silver schema."""
+    df = mock_contractor_tracking.rename({
+        "contractor_id": "employee_id",
+        "contractor_name": "employee_name",
+        "start_date": "assignment_start",
+        "end_date": "assignment_end",
+    })
+
+    df = df.with_columns(
+        pl.col("employee_id").str.to_uppercase(),
+        pl.col("employee_name").str.to_titlecase(),
+        pl.col("position_id").str.to_uppercase(),
+        pl.col("assignment_start").str.strptime(pl.Date, "%Y-%m-%d"),
+        pl.when(pl.col("assignment_end") != "")
+        .then(pl.col("assignment_end").str.strptime(pl.Date, "%Y-%m-%d"))
+        .otherwise(None)
+        .alias("assignment_end"),
+        pl.lit("CONTRACTOR").alias("employee_type"),
+    )
+
+    conn = duckdb.connect("ducklake:./data/chronos.ducklake")
+    conn.execute("CREATE TABLE IF NOT EXISTS silver.contractor_tracking AS SELECT * FROM df")
+    context.log.info("Wrote Silver contractor tracking to silver.contractor_tracking")
+    return df
 ```
 
 
@@ -1062,6 +1135,8 @@ ls dbt_project/target/manifest.json
 
 ### 5.3 Running Dagster Assets
 
+→ [[#5. Dagster Orchestration]]
+
 ```bash
 # Start Dagster UI
 uv run dg dev -h 0.0.0.0 -p 2320
@@ -1089,7 +1164,11 @@ git push origin main
 
 ## 6. dbt Transformation Layer
 
+→ [[#Table of Contents]]
+
 ### 6.1 Install dbt Packages
+
+→ [[#6. dbt Transformation Layer]]
 
 ```bash
 cd ~/workspace/projects/chronos-seat/dbt_project
@@ -1098,7 +1177,9 @@ uv run dbt deps
 
 ### 6.2 Macros
 
-**dbt_project/macros/generate_sk.sql**:
+→ [[#6. dbt Transformation Layer]]
+
+**dbt_project/macros/generate_sk.sql** — Surrogate key macro — generates deterministic MD5 hash from natural key + effective date. Used by all SCD Type 2 dimension models.
 
 ```sql
 {#
@@ -1137,7 +1218,13 @@ uv run dbt deps
 
 ### 6.3 Initialize DuckLake
 
+→ [[#6. dbt Transformation Layer]]
+
 Before running any dbt models or seeds, create the DuckLake catalog. DuckLake stores table data as Parquet files and metadata in a DuckDB catalog file — it is **not** a plain DuckDB database.
+
+> **Where does the DuckLake catalog live?** At the **project root** (`data/chronos.ducklake`), NOT inside `dbt_project/`. All Medallion schemas (bronze, silver, gold) live inside this single catalog.
+>
+> **Path relativity**: The attach commands below run from the **project root** and use `ducklake:data/chronos.ducklake`. But dbt runs from inside `dbt_project/`, so `profiles.yml` uses `ducklake:../data/chronos.ducklake` (going up one level from `dbt_project/` to the project root, then into `data/`). Both paths point to the same file.
 
 **Prerequisites:** Install the `ducklake` DuckDB extension (one-time):
 
@@ -1145,15 +1232,10 @@ Before running any dbt models or seeds, create the DuckLake catalog. DuckLake st
 duckdb -c "INSTALL ducklake;"
 ```
 
-Create the data directories and attach the DuckLake catalog:
+Attach the DuckLake catalog:
 
 ```bash
-cd ~/workspace/projects/chronos-seat/dbt_project
-
-# Create the data directories
-#   data/silver/ = Parquet landing zone for Dagster-silver transforms
-#   data/gold/   = DuckLake catalog file + Parquet data files
-mkdir -p data/silver data/gold
+cd ~/workspace/projects/chronos-seat
 
 # Attach the DuckLake catalog (creates data/chronos.ducklake + data/chronos.ducklake.files/ on first use)
 # The `alias: chronos` matches the alias in profiles.yml — all schemas (bronze, silver, gold)
@@ -1171,21 +1253,25 @@ duckdb -c "ATTACH 'ducklake:data/chronos.ducklake' AS chronos; SHOW TABLES;"
 # → No tables yet (expected — dbt will create them)
 ```
 
-> **Why DuckLake?** Tables created through dbt are stored as Parquet files in `dbt_project/data/chronos.ducklake.files/`, not inside the `.duckdb` file. This means the data is portable, inspectable, and not locked into a single binary file. The `.ducklake` file is just the catalog (metadata).
+> **Why DuckLake?** Tables created through dbt are stored as Parquet files in `data/chronos.ducklake.files/`, not inside the `.duckdb` file. This means the data is portable, inspectable, and not locked into a single binary file. The `.ducklake` file is just the catalog (metadata).
 >
 > **Why `attach` instead of `path`?** The old `path: ducklake:` approach only put the gold schema inside DuckLake — bronze and silver were "ghost" schemas in DuckDB's `main` database. The `attach` pattern ensures **all three Medallion schemas** (bronze, silver, gold) live inside the DuckLake catalog, giving every layer snapshot history and Parquet-backed storage.
+>
+> **⚠️ Path gotcha:** DuckDB stores the **absolute** path to the data directory inside the catalog metadata. If you ever change the `data_path` in `profiles.yml` (e.g. from `data/...` to `../data/...`), DuckDB will refuse to attach with a path mismatch error. Fix: add `override_data_path: true` to the `options` block in `profiles.yml`. This tells DuckDB to accept the new path without recreating the catalog.
 
 ---
 
 ### 6.4 Date Dimension
 
-**dbt_project/models/bronze/dim_date.sql** — 15-year date spine (2020-2034) generated via DuckDB `generate_series`. No CSV seed needed; this is a dbt model that builds the dimension table directly.
+→ [[#6. dbt Transformation Layer]]
+
+**dbt_project/models/marts/dim_date.sql** — 15-year date spine (2020-2034) generated via DuckDB `generate_series`. No CSV seed needed; this is a dbt model that builds the dimension table directly. Placed in **gold** schema because it's a conformed dimension, alongside the other dimension and fact tables.
 
 ```sql
 {{
     config(
         materialized='table',
-        schema='bronze'
+        schema='gold'
     )
 }}
 
@@ -1232,19 +1318,22 @@ uv run dbt run --select dim_date
 Verify:
 
 ```bash
-duckdb -c "ATTACH 'ducklake:dbt_project/data/chronos.ducklake' AS chronos; SELECT COUNT(*) AS row_count FROM chronos.bronze.dim_date;"
+cd ~/workspace/projects/chronos-seat
+duckdb -c "ATTACH 'ducklake:data/chronos.ducklake' AS chronos; SELECT COUNT(*) AS row_count FROM chronos.gold.dim_date;"
 # Expected: ~5479 rows (15 years × 365.25 days)
 ```
 
-> **Why `bronze` and not `main_bronze`?** dbt's default behavior prefixes schema names with the database name (`main_bronze`). We override this in `dbt_project/macros/generate_schema_name.sql` to return just the clean schema name (`bronze`, `silver`, `gold`). This keeps DuckLake table references simple and matches the Medallion layer names in `dbt_project.yml`.
+> **Why `gold` and not `bronze`?** `dim_date` is a conformed dimension — it's not raw ingested data. It belongs in the gold schema alongside `dim_position`, `dim_employee`, and the fact tables. This matches the Medallion principle: gold = business-ready dimensional models.
 
 ---
 
 ### 6.5 Seeds (Gold Reference Data)
 
+→ [[#6. dbt Transformation Layer]]
+
 The seeds (`dim_change_type`, `dim_change_reason`, `dim_department`) are conformed dimension tables consumed by gold-layer models. Per Medallion architecture, gold tables must only depend on silver — so these reference dimensions live in the `gold` schema alongside `dim_position`, `dim_employee`, and the fact tables.
 
-**dbt_project/seeds/dim_change_type.csv**:
+**dbt_project/seeds/dim_change_type.csv** — Change type reference data — seed CSV loaded into gold schema. Values: NEW_HIRE, EXIT, TRANSFER, RECLASSIFICATION, etc.
 
 ```csv
 change_type_sk,change_type_name,change_type_category,description,is_active
@@ -1258,7 +1347,7 @@ SALARY_CHANGE,Salary Change,FINANCIAL,Salary band adjustment,true
 LOCATION_CHANGE,Location Change,STRUCTURE,Position location changes,true
 ```
 
-**dbt_project/seeds/dim_change_reason.csv**:
+**dbt_project/seeds/dim_change_reason.csv** — Change reason reference data — seed CSV loaded into gold schema. Values: HIRING, REPLACEMENT, RESTRUCTURE, etc.
 
 ```csv
 change_reason_sk,change_reason_name,description,is_active
@@ -1269,7 +1358,7 @@ CONTRACT_END,Contract End,Contractor engagement ends,true
 PROMOTION,Promotion,Employee promoted to new role,true
 ```
 
-**dbt_project/seeds/dim_department.csv**:
+**dbt_project/seeds/dim_department.csv** — Department reference data — seed CSV loaded into gold schema. SCD Type 1 (overwrite on refresh).
 
 ```csv
 department_sk,department_id,department_name,division,cost_center_lead,is_active
@@ -1286,13 +1375,17 @@ cd dbt_project && uv run dbt seed
 
 ### 6.6 Staging Models
 
-**dbt_project/models/staging/stg_erp_roster.sql**:
+→ [[#6. dbt Transformation Layer]]
+
+Staging models read directly from DuckLake bronze/silver tables. Since the raw data is already in DuckLake (written by Dagster assets), we use direct table references instead of `{{ source() }}` — no `sources.yml` needed for bronze.
+
+**dbt_project/models/staging/stg_erp_roster.sql** — Staging view that reads raw `bronze.erp_roster` (SAP ERP employee export) and applies light cleaning: trims whitespace, uppercases IDs and types, preserves all source columns. Materialized as a view in the `silver` schema — no data duplication, just a cleaned projection.
 
 ```sql
 {{ config(materialized='view', schema='silver') }}
 
 WITH source AS (
-    SELECT * FROM {{ source('bronze', 'erp_roster') }}
+    SELECT * FROM bronze.erp_roster
 ),
 
 cleaned AS (
@@ -1315,13 +1408,13 @@ cleaned AS (
 SELECT * FROM cleaned
 ```
 
-**dbt_project/models/staging/stg_hr_allocations.sql**:
+**dbt_project/models/staging/stg_hr_allocations.sql** — Staging view that reads `bronze.hr_allocations` (HR allocation data from SharePoint) and standardizes casing: uppercases IDs, initcaps names and titles, preserves allocation factors and date ranges. Materialized as a view in the `silver` schema.
 
 ```sql
 {{ config(materialized='view', schema='silver') }}
 
 WITH source AS (
-    SELECT * FROM {{ source('bronze', 'hr_allocations') }}
+    SELECT * FROM bronze.hr_allocations
 ),
 
 cleaned AS (
@@ -1341,26 +1434,37 @@ cleaned AS (
 SELECT * FROM cleaned
 ```
 
-**dbt_project/models/staging/sources.yml**:
+**dbt_project/models/staging/stg_contractor_tracking.sql** — Staging view that reads `bronze.contractor_tracking` (contractor data from SharePoint) and standardizes casing: uppercases IDs, initcaps names, preserves assignment dates and employee type. Materialized as a view in the `silver` schema.
 
-```yaml
-version: 2
+```sql
+{{ config(materialized='view', schema='silver') }}
 
-sources:
-  - name: bronze
-    schema: main
-    tables:
-      - name: erp_roster
-        identifier: silver_erp_roster
-      - name: hr_allocations
-        identifier: silver_hr_allocations
-      - name: contractor_tracking
-        identifier: silver_contractor_tracking
+WITH source AS (
+    SELECT * FROM bronze.contractor_tracking
+),
+
+cleaned AS (
+    SELECT
+        UPPER(TRIM(employee_id)) AS employee_id,
+        INITCAP(TRIM(employee_name)) AS employee_name,
+        UPPER(TRIM(position_id)) AS position_id,
+        assignment_start,
+        assignment_end,
+        employee_type,
+        current_timestamp AS _loaded_at
+    FROM source
+)
+
+SELECT * FROM cleaned
 ```
+
+> **Why no `sources.yml` for bronze?** The old approach used `{{ source('bronze', 'erp_roster') }}` to read from flat files in `data/raw/`. Now that Dagster writes raw data directly into DuckLake bronze tables, the staging models can reference them directly as `bronze.erp_roster`. No source definitions needed — dbt and DuckLake are in the same catalog.
 
 ### 6.7 Mart Models (Gold Layer)
 
-**dbt_project/models/marts/dim_position.sql**:
+→ [[#6. dbt Transformation Layer]]
+
+**dbt_project/models/marts/dim_position.sql** — SCD Type 2 position master dimension. Reads distinct positions from `stg_erp_roster`, generates a surrogate key via `generate_sk()` using a configurable effective start date (`var("dim_effective_start", "2025-01-01")`). Each row represents a unique position with SCD Type 2 tracking columns (`effective_start_date`, `effective_end_date`, `is_current`). Materialized as a table in the `gold` schema.
 
 ```sql
 {{
@@ -1382,7 +1486,7 @@ WITH source AS (
 
 final AS (
     SELECT
-        {{ generate_sk('position_id', "'2025-01-01'") }} AS position_sk,
+        {{ generate_sk('position_id', "'" ~ var("dim_effective_start", "2025-01-01") ~ "'") }} AS position_sk,
         position_id,
         position_title,
         department_id,
@@ -1390,7 +1494,7 @@ final AS (
         NULL AS budgeted_salary_band,
         FALSE AS is_manager_position,
         NULL AS manager_sk,
-        DATE '2025-01-01' AS effective_start_date,
+        DATE '{{ var('dim_effective_start', '2025-01-01') }}' AS effective_start_date,
         DATE '9999-12-31' AS effective_end_date,
         TRUE AS is_current,
         'ERP' AS source_system,
@@ -1402,7 +1506,7 @@ final AS (
 SELECT * FROM final
 ```
 
-**dbt_project/models/marts/dim_employee.sql**:
+**dbt_project/models/marts/dim_employee.sql** — SCD Type 2 employee master dimension. Reads distinct employees from `stg_erp_roster`, generates a surrogate key from `employee_id` + `hire_date`. Uses the actual hire date as the effective start date — unlike dim_position, this has a real date from the source. Materialized as a table in the `gold` schema.
 
 ```sql
 {{
@@ -1442,7 +1546,7 @@ final AS (
 SELECT * FROM final
 ```
 
-**dbt_project/models/marts/fact_position_occupancy_event.sql**:
+**dbt_project/models/marts/fact_position_occupancy_event.sql** — Append-only event fact table that records every position occupancy change (new hires, exits, transfers). Reads from `stg_erp_roster` (filtered to FULL-TIME employees), joins to `dim_position` and `dim_employee` to resolve surrogate keys. Uses MD5-based `event_id` from employee + position + date. Materialized as an incremental table in the `gold` schema — only new events are appended on each run.
 
 ```sql
 {{
@@ -1488,7 +1592,7 @@ events AS (
 SELECT * FROM events
 ```
 
-**dbt_project/models/marts/bridge_position_occupancy.sql**:
+**dbt_project/models/marts/bridge_position_occupancy.sql** — Many-to-many bridge table linking employees to positions via HR allocations. Reads from `stg_hr_allocations`, joins to `dim_position` and `dim_employee` to resolve surrogate keys. Includes an `is_overlap` flag that detects when multiple employees are allocated to the same position during the same period. Materialized as a table in the `gold` schema — full refresh each run since allocations change.
 
 ```sql
 {{
@@ -1533,9 +1637,21 @@ final AS (
 SELECT * FROM final
 ```
 
+Before pushing changes or reloading Dagster, run these checks:
+
+```bash
+cd ~/workspace/projects/chronos-seat/dbt_project
+uv run dbt parse && uv run dbt compile && uv run dbt list
+```
+
+→ Validates the entire dbt project compiles cleanly: `parse` checks YAML/model syntax, `compile` builds all models (catching ref/source errors), and `list` confirms all models/resources are loadable. If any of these fail, fix before proceeding — a broken dbt project will cause Dagster asset materialization failures.
+
+
 ### 6.8 Schema Tests
 
-**dbt_project/models/marts/schema.yml**:
+→ [[#6. dbt Transformation Layer]]
+
+**dbt_project/models/marts/schema.yml** — Schema tests — dbt data quality tests for gold-layer models (unique, not_null, expression_is_true, relationships).
 
 ```yaml
 version: 2
@@ -1602,7 +1718,11 @@ git push origin main
 
 ## 7. Rill Dashboards
 
+→ [[#Table of Contents]]
+
 ### 7.1 rill.yaml
+
+→ [[#7. Rill Dashboards]]
 
 ```yaml
 # rill_dashboard/rill.yaml
@@ -1612,11 +1732,13 @@ version: "1.0"
 
 ### 7.2 Source Configuration
 
-**rill_dashboard/sources/gold_sources.yaml**:
+→ [[#7. Rill Dashboards]]
+
+**rill_dashboard/sources/gold_sources.yaml** — Rill source config — defines DuckDB connection to DuckLake gold schema for dashboard queries.
 
 ```yaml
 type: duckdb
-dsn: ducklake:./dbt_project/data/chronos.ducklake
+dsn: ducklake:./data/chronos.ducklake
 sql: |
   SELECT
     dp.position_id,
@@ -1641,7 +1763,9 @@ sql: |
 
 ### 7.3 Main Dashboard
 
-**rill_dashboard/dashboards/position_tracker.yaml**:
+→ [[#7. Rill Dashboards]]
+
+**rill_dashboard/dashboards/position_tracker.yaml** — Rill dashboard definition — main position tracker dashboard with KPIs, charts, and tables reading from gold schema.
 
 ```yaml
 reference: Dashboard
@@ -1676,6 +1800,8 @@ dimensions:
 
 ### 7.4 Start Rill
 
+→ [[#7. Rill Dashboards]]
+
 ```bash
 rill start --project ./rill_dashboard --port 2321
 # → http://localhost:2321
@@ -1696,7 +1822,11 @@ git push origin main
 
 ## 8. Change Request System
 
+→ [[#Table of Contents]]
+
 ### 8.1 File Format
+
+→ [[#8. Change Request System]]
 
 | Column | Required | Description | Example |
 |--------|----------|-------------|---------|
@@ -1721,7 +1851,9 @@ git push origin main
 
 ### 8.2 Sample Change Request
 
-**data/change_requests/inbox/CR-2026-0001.csv**:
+→ [[#8. Change Request System]]
+
+**data/change_requests/inbox/CR-2026-0001.csv** — Sample change request file — example CSV showing the format for submitting position/employee changes through the inbox workflow.
 
 ```csv
 request_id,request_date,requested_by,approved_by,effective_date,change_type,change_reason,position_id,employee_id,employee_name,employee_type,position_title,department_id,cost_center,allocation_factor,notes
@@ -1731,6 +1863,8 @@ CR-2026-0003,2026-06-14,ops.manager,director,2026-08-01,TITLE_CHANGE,PROMOTION,P
 ```
 
 ### 8.3 Validation Rules
+
+→ [[#8. Change Request System]]
 
 1. Position exists in dim_position (or is new for NEW_HIRE)
 2. Employee exists in dim_employee (unless NEW_HIRE with new employee)
@@ -1742,7 +1876,9 @@ CR-2026-0003,2026-06-14,ops.manager,director,2026-08-01,TITLE_CHANGE,PROMOTION,P
 
 ### 8.4 Dagster Sensor
 
-**src/chronos_seat/defs/ingestion/rawgen/change_request_sensor.py**:
+→ [[#8. Change Request System]]
+
+**src/chronos_seat/defs/ingestion/rawgen/change_request_sensor.py** — Change request sensor — watches `data/change_requests/inbox/` for new CSV files, validates them, and triggers processing.
 
 ```python
 """Dagster sensor — watches change_requests/inbox/ for new files."""
@@ -1807,7 +1943,9 @@ def change_request_sensor(context):
 
 ### 8.5 dbt Models
 
-**dbt_project/models/staging/stg_change_requests.sql**:
+→ [[#8. Change Request System]]
+
+**dbt_project/models/staging/stg_change_requests.sql** — Incremental staging model that reads raw change request files via `{{ source('change_requests', 'raw_change_request') }}`. Cleans and casts all columns: uppercases IDs and types, trims text, safely casts dates and allocation factors with `TRY_CAST`. The incremental filter on `inserted_at` ensures only new change requests are processed on each run.
 
 ```sql
 {{
@@ -1843,7 +1981,7 @@ cleaned AS (
 SELECT * FROM cleaned
 ```
 
-**dbt_project/models/intermediate/int_change_request_events.sql**:
+**dbt_project/models/intermediate/int_change_request_events.sql** — Intermediate model that enriches change requests with dimension surrogate keys. Takes the cleaned change requests from `stg_change_requests` and LEFT JOINs to `dim_position` (to resolve `position_sk` and `department_sk`) and `dim_employee` (to resolve `employee_sk`), matching on current rows only (`is_current = TRUE`). This is the last step before the Dagster asset applies the changes to gold-layer fact tables.
 
 ```sql
 WITH requests AS (
@@ -1919,7 +2057,11 @@ defs = Definitions(
 
 ## 9. Entity Management System
 
+→ [[#Table of Contents]]
+
 ### 9.1 File Format
+
+→ [[#9. Entity Management System]]
 
 | Column | Required | Description |
 |--------|----------|-------------|
@@ -1937,6 +2079,8 @@ defs = Definitions(
 | `notes` | No | Justification |
 
 ### 9.2 Sample Files
+
+→ [[#9. Entity Management System]]
 
 **Multi-row CREATE** (`data/entity_requests/inbox/ENT-2026-0001.csv`):
 
@@ -1957,6 +2101,8 @@ ENT-2026-0002,2026-06-14,ops.manager,director,2026-07-01,POSITION,UPDATE,POS-100
 
 ### 9.3 Entity Type Schemas
 
+→ [[#9. Entity Management System]]
+
 **POSITION**: position_id (VARCHAR), position_title (VARCHAR), department_id (VARCHAR), cost_center (VARCHAR), budgeted_salary_band (VARCHAR), is_manager_position (BOOLEAN), manager_employee_id (VARCHAR)
 
 **EMPLOYEE**: employee_id (VARCHAR), employee_name (VARCHAR), employee_type (VARCHAR), hire_date (DATE), termination_date (DATE), department_id (VARCHAR)
@@ -1965,6 +2111,8 @@ ENT-2026-0002,2026-06-14,ops.manager,director,2026-07-01,POSITION,UPDATE,POS-100
 
 ### 9.4 Operation Semantics
 
+→ [[#9. Entity Management System]]
+
 - **CREATE**: Generate SK via MD5, insert with `effective_start_date = effective_date`, `is_current = TRUE`
 - **UPDATE**: Close current row (`effective_end_date = effective_date - 1 day`, `is_current = FALSE`), insert new row with updated fields
 - **DEACTIVATE**: Set `effective_end_date = effective_date`, `is_current = FALSE`. Do NOT delete.
@@ -1972,7 +2120,9 @@ ENT-2026-0002,2026-06-14,ops.manager,director,2026-07-01,POSITION,UPDATE,POS-100
 
 ### 9.5 Dagster Sensor
 
-**src/chronos_seat/defs/ingestion/rawgen/entity_request_sensor.py**:
+→ [[#9. Entity Management System]]
+
+**src/chronos_seat/defs/ingestion/rawgen/entity_request_sensor.py** — Entity request sensor — watches `data/entity_requests/inbox/` for new CSV files, validates them, and triggers CRUD processing.
 
 ```python
 """Dagster sensor — watches entity_requests/inbox/ for new files."""
@@ -2030,7 +2180,9 @@ def entity_request_sensor(context):
 
 ### 9.6 Entity Processing Asset (Full CRUD)
 
-**src/chronos_seat/defs/ingestion/rawgen/entity_request_assets.py**:
+→ [[#9. Entity Management System]]
+
+**src/chronos_seat/defs/ingestion/rawgen/entity_request_assets.py** — Entity request processing assets — full CRUD operations (CREATE, UPDATE, DEACTIVATE, REACTIVATE) for POSITION, EMPLOYEE, DEPARTMENT entities.
 
 ```python
 """Process approved entity requests — full SCD Type 2 CRUD for all entity types."""
@@ -2043,7 +2195,7 @@ from hashlib import md5
 
 
 def _get_duckdb():
-    conn = duckdb.connect("ducklake:./dbt_project/data/chronos.ducklake")
+    conn = duckdb.connect("ducklake:./data/chronos.ducklake")
     return conn
 
 
@@ -2324,7 +2476,11 @@ defs = Definitions(
 
 ## 10. Web Portal
 
+→ [[#Table of Contents]]
+
 ### 10.1 Scaffold
+
+→ [[#10. Web Portal]]
 
 ```bash
 cd ~/workspace/projects/chronos-seat
@@ -2334,6 +2490,8 @@ npm install @tanstack/react-table recharts zustand
 ```
 
 ### 10.2 Local Development
+
+→ [[#10. Web Portal]]
 
 ```bash
 # Terminal 1: Dagster
@@ -2354,12 +2512,14 @@ Required environment variables for the portal (create `portal/.env.local`):
 ```bash
 DAGSTER_URL=http://localhost:2320
 RILL_URL=http://localhost:2321
-DUCKDB_PATH=ducklake:../dbt_project/data/chronos.ducklake
+DUCKDB_PATH=ducklake:../data/chronos.ducklake
 ```
 
 ### 10.3 Key Components
 
-**components/layout/Navbar.tsx**:
+→ [[#10. Web Portal]]
+
+**components/layout/Navbar.tsx** — Portal navbar — top navigation bar for the web portal with links to dashboards, entities, and change requests.
 
 ```tsx
 "use client";
@@ -2387,7 +2547,7 @@ export default function Navbar() {
 }
 ```
 
-**components/dashboard/DashboardEmbed.tsx**:
+**components/dashboard/DashboardEmbed.tsx** — Dashboard embed component — iframe wrapper for embedding Rill dashboards in the portal.
 
 ```tsx
 export default function DashboardEmbed({ src, title }: { src: string; title: string }) {
@@ -2405,7 +2565,7 @@ export default function DashboardEmbed({ src, title }: { src: string; title: str
 }
 ```
 
-**components/entities/EntityTable.tsx**:
+**components/entities/EntityTable.tsx** — Entity table component — renders SCD Type 2 entity data with history, filtering, and pagination.
 
 ```tsx
 "use client";
@@ -2494,13 +2654,15 @@ export default function EntityTable({
 
 ### 10.4 API Routes
 
-**app/api/entities/route.ts**:
+→ [[#10. Web Portal]]
+
+**app/api/entities/route.ts** — Entity API route — Next.js API endpoint for CRUD operations on entities. Reads/writes to DuckLake gold schema.
 
 ```typescript
 import { NextRequest, NextResponse } from "next/server";
 import duckdb from "duckdb";
 
-const DB_PATH = process.env.DUCKDB_PATH || "ducklake:./dbt_project/data/chronos.ducklake";
+const DB_PATH = process.env.DUCKDB_PATH || "ducklake:./data/chronos.ducklake";
 
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
@@ -2535,6 +2697,8 @@ export async function GET(request: NextRequest) {
 
 ### 10.5 Portal Dockerfile
 
+→ [[#10. Web Portal]]
+
 ```dockerfile
 FROM node:20-alpine
 WORKDIR /app
@@ -2561,7 +2725,11 @@ git push origin main
 
 ## 11. Docker Deployment
 
+→ [[#Table of Contents]]
+
 ### 11.1 Dockerfile (Dagster Host Processes)
+
+→ [[#11. Docker Deployment]]
 
 > This image is used by both `dagster-webserver` and `dagster-daemon`. It contains
 > Dagster packages + configuration, but no user code (user code is baked in via
@@ -2594,6 +2762,8 @@ EXPOSE 2320
 ```
 
 ### 11.2 docker-compose.yml
+
+→ [[#11. Docker Deployment]]
 
 > Three long-running containers: webserver, daemon, and Rill. Each runs in its own
 > container from the same Docker image. The webserver and daemon are independent
@@ -2656,7 +2826,7 @@ services:
     environment:
       - DAGSTER_URL=http://dagster-webserver:2320
       - RILL_URL=http://rill:2321
-      - DUCKDB_PATH=ducklake:/dbt_project/data/chronos.ducklake
+      - DUCKDB_PATH=ducklake:/data/chronos.ducklake
     volumes:
       - chronos-data:/data:ro
     depends_on:
@@ -2696,7 +2866,11 @@ git push origin main
 
 ## 12. Testing
 
+→ [[#Table of Contents]]
+
 ### 12.1 Makefile
+
+→ [[#12. Testing]]
 
 ```makefile
 .PHONY: help setup ingest transform validate pipeline test lint format clean docker-up docker-down
@@ -2707,11 +2881,9 @@ help:
 
 setup:
 	uv sync
-	mkdir -p data/{raw,silver,gold}
 	mkdir -p data/change_requests/{inbox,approved,rejected,processing,archive}
 	mkdir -p data/entity_requests/{inbox,approved,rejected,processing,archive}
 	mkdir -p dagster_home        # Dagster's working directory: stores run history, schedules, sensor state
-	touch data/{raw,silver,gold}/.gitkeep
 	touch data/change_requests/{inbox,approved,rejected,processing,archive}/.gitkeep
 	touch data/entity_requests/{inbox,approved,rejected,processing,archive}/.gitkeep
 	# Write dagster.yaml inside dagster_home/ — Dagster reads $DAGSTER_HOME/dagster.yaml at startup
@@ -2753,7 +2925,9 @@ docker-down:
 
 ### 12.2 Test Files
 
-**tests/test_ingestion.py**:
+→ [[#12. Testing]]
+
+**tests/test_ingestion.py** — Ingestion tests — pytest tests for file-based ingestion assets (file reading, bronze table writes, validation).
 
 ```python
 """Tests for ingestion pipeline."""
@@ -2764,29 +2938,25 @@ import pytest
 
 
 def test_raw_directory_structure():
-    """Raw data should follow naming convention."""
-    raw_path = Path("data/raw")
-    if not raw_path.exists():
-        pytest.skip("No raw data yet")
-    for date_dir in raw_path.iterdir():
-        if date_dir.is_dir():
-            for f in date_dir.iterdir():
-                assert f.suffix in (".csv", ".parquet", ".xlsx")
+    """Bronze tables should exist in DuckLake."""
+    import duckdb
+    conn = duckdb.connect("ducklake:./data/chronos.ducklake")
+    tables = conn.execute("SELECT table_name FROM information_schema.tables WHERE table_schema = 'bronze'").fetchall()
+    table_names = [t[0] for t in tables]
+    assert "erp_roster" in table_names
+    assert "hr_allocations" in table_names
+    assert "contractor_tracking" in table_names
 
 
 def test_no_duplicate_employee_ids():
     """Each employee_id should appear once in the roster."""
-    raw_path = Path("data/raw")
-    if not raw_path.exists():
-        pytest.skip("No raw data yet")
-    csv_files = list(raw_path.rglob("erp_roster_*.csv"))
-    if not csv_files:
-        pytest.skip("No ERP roster files")
-    df = pl.read_csv(csv_files[0])
+    import duckdb
+    conn = duckdb.connect("ducklake:./data/chronos.ducklake")
+    df = conn.execute("SELECT employee_id FROM bronze.erp_roster").fetchdf()
     assert len(df) == df["employee_id"].n_unique()
 ```
 
-**tests/test_scd2_constraints.py**:
+**tests/test_scd2_constraints.py** — SCD Type 2 constraint tests — validates no overlapping date ranges, no duplicate current rows, FK integrity.
 
 ```python
 """Tests for SCD Type 2 constraints."""
@@ -2796,7 +2966,7 @@ import pytest
 
 
 def _get_conn():
-    return duckdb.connect("ducklake:./dbt_project/data/chronos.ducklake")
+    return duckdb.connect("ducklake:./data/chronos.ducklake")
 
 
 def test_no_duplicate_current_positions():
@@ -2838,7 +3008,7 @@ def test_employee_sk_uniqueness():
     assert len(result) == 0
 ```
 
-**tests/test_dbt_transforms.py**:
+**tests/test_dbt_transforms.py** — dbt transform tests — validates gold table existence, row counts, and schema correctness after dbt runs.
 
 ```python
 """Tests for dbt transformations."""
@@ -2848,7 +3018,7 @@ import pytest
 
 
 def _get_conn():
-    return duckdb.connect("ducklake:./dbt_project/data/chronos.ducklake")
+    return duckdb.connect("ducklake:./data/chronos.ducklake")
 
 
 def test_dim_position_exists():
@@ -2892,7 +3062,11 @@ git push origin main
 
 ## 13. Network Access
 
+→ [[#Table of Contents]]
+
 ### 13.1 Port Registry
+
+→ [[#13. Network Access]]
 
 | Service | Port | Purpose |
 |---------|------|---------|
@@ -2903,6 +3077,8 @@ git push origin main
 
 ### 13.2 Local Network (LAN)
 
+→ [[#13. Network Access]]
+
 ```bash
 uv run dg dev -h 0.0.0.0 -p 2320
 rill start --project ./rill_dashboard --port 2321 --host 0.0.0.0
@@ -2911,7 +3087,9 @@ rill start --project ./rill_dashboard --port 2321 --host 0.0.0.0
 
 ### 13.3 Reverse Proxy (nginx)
 
-**nginx/nginx.conf**:
+→ [[#13. Network Access]]
+
+**nginx/nginx.conf** — Nginx reverse proxy config — routes traffic to Dagster (2319), Rill (8080), and Portal (3000) on a single port.
 
 ```nginx
 events { worker_connections 1024; }
@@ -2960,17 +3138,25 @@ openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
 
 ## 14. Scaling Path
 
+→ [[#Table of Contents]]
+
 ### Phase 1: Local (Current)
+
+→ [[#14. Scaling Path]]
 
 - DuckDB + Local Rill + Mock data
 - Single user, zero cost
 
 ### Phase 2: Multi-Team
 
+→ [[#14. Scaling Path]]
+
 - MotherDuck (cloud DuckDB) + Rill Cloud
 - Migration: change `profiles.yml` DSN, set `MOTHERDUCK_TOKEN`
 
 ### Phase 3: Enterprise
+
+→ [[#14. Scaling Path]]
 
 - Snowflake/BigQuery + Dagster+ + Rill Cloud
 - Migration: update dbt `profiles.yml` target, update Rill sources
@@ -2978,6 +3164,8 @@ openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
 ---
 
 ## 15. Quick Reference — Run Everything Locally
+
+→ [[#Table of Contents]]
 
 ```bash
 # 1. First-time setup
@@ -3010,10 +3198,12 @@ curl http://localhost:2319                # Portal
 
 ### End-to-End Data Flow
 
+→ [[#15. Quick Reference — Run Everything Locally]]
+
 ```
-[Mock Data Assets] → data/raw/ (CSV/Parquet/Excel)
+[Mock Data Assets] → bronze.* (DuckLake)
         ↓
-[Silver Transforms] → data/silver/ (cleaned Parquet)
+[Silver Transforms] → silver.* (DuckLake)
         ↓
 [dbt seed] → dim_change_type, dim_change_reason, dim_department
         ↓
@@ -3021,12 +3211,14 @@ curl http://localhost:2319                # Portal
         ↓
 [dbt build] → dim_position, dim_employee, fact_position_occupancy_event, bridge_position_occupancy
         ↓
-[Rill] → reads from DuckLake catalog (dbt_project/data/chronos.ducklake) → dashboards
+[Rill] → reads from DuckLake catalog (data/chronos.ducklake) → dashboards
         ↓
 [Portal] → reads from DuckDB API → entity browser + change requests
 ```
 
 ### Demo Script (5 minutes)
+
+→ [[#15. Quick Reference — Run Everything Locally]]
 
 1. Open `http://localhost:2319` → show Rill dashboard with occupancy trends
 2. Click "Entities" → search for POS-1001 → click row → show SCD history
@@ -3038,9 +3230,13 @@ curl http://localhost:2319                # Portal
 
 ## 17. v3 Fixes — Critical Patches
 
+→ [[#Table of Contents]]
+
 > Applied 2026-06-15 after v2 eval. These patches fix 7 issues found in v2.
 
 ### 17.1 Security: SQL Injection in Entity API Route
+
+→ [[#17. v3 Fixes — Critical Patches]]
 
 **File**: `portal/app/api/entities/route.ts`
 
@@ -3085,6 +3281,8 @@ export async function GET(request: NextRequest) {
 ```
 
 ### 17.2 Security: SQL Injection in Department UPDATE
+
+→ [[#17. v3 Fixes — Critical Patches]]
 
 **File**: `src/chronos_seat/defs/ingestion/rawgen/entity_request_assets.py`
 
@@ -3143,6 +3341,8 @@ def _apply_department_change(df: pl.DataFrame, operation: str, entity_id: str, e
 
 ### 17.3 Missing `silver_contractor_tracking` Asset
 
+→ [[#17. v3 Fixes — Critical Patches]]
+
 **File**: `src/chronos_seat/defs/transformation/adhoc/assets.py`
 
 Add after `silver_hr_allocations`:
@@ -3154,9 +3354,7 @@ Add after `silver_hr_allocations`:
     description="Clean and standardize contractor tracking to Silver",
 )
 def silver_contractor_tracking(context: AssetExecutionContext, mock_contractor_tracking: pl.DataFrame) -> pl.DataFrame:
-    """Standardize contractor tracking data."""
-    SILVER_PATH.mkdir(parents=True, exist_ok=True)
-
+    """Standardize contractor tracking data. Writes to DuckLake silver schema."""
     df = mock_contractor_tracking.rename({
         "contractor_id": "employee_id",
         "contractor_name": "employee_name",
@@ -3177,13 +3375,15 @@ def silver_contractor_tracking(context: AssetExecutionContext, mock_contractor_t
         pl.lit("CONTRACTOR").alias("employee_type"),
     )
 
-    output_path = SILVER_PATH / f"contractor_tracking_{date.today().isoformat()}.parquet"
-    df.write_parquet(str(output_path))
-    context.log.info(f"Wrote Silver contractor tracking: {output_path}")
+    conn = duckdb.connect("ducklake:./data/chronos.ducklake")
+    conn.execute("CREATE TABLE IF NOT EXISTS silver.contractor_tracking AS SELECT * FROM df")
+    context.log.info("Wrote Silver contractor tracking to silver.contractor_tracking")
     return df
 ```
 
 ### 17.4 Missing `stg_contractor_tracking` dbt Model
+
+→ [[#17. v3 Fixes — Critical Patches]]
 
 **File**: `dbt_project/models/staging/stg_contractor_tracking.sql`
 
@@ -3210,6 +3410,8 @@ SELECT * FROM cleaned
 ```
 
 ### 17.5 Wire Sensors and Entity Assets into Definitions
+
+→ [[#17. v3 Fixes — Critical Patches]]
 
 **File**: `src/chronos_seat/definitions.py`
 
@@ -3256,6 +3458,8 @@ defs = Definitions(
 
 ### 17.6 Rill Container Volume Fix
 
+→ [[#17. v3 Fixes — Critical Patches]]
+
 **File**: `docker-compose.yml`
 
 The Rill container needs the rill_dashboard files. Mount them from the host:
@@ -3278,6 +3482,8 @@ The Rill container needs the rill_dashboard files. Mount them from the host:
 ```
 
 ### 17.7 Fix CI Pipeline — Materialize Mock Data Before dbt
+
+→ [[#17. v3 Fixes — Critical Patches]]
 
 **File**: `.github/workflows/ci.yml`
 
@@ -3302,14 +3508,8 @@ The CI must create mock data before running dbt. Replace the `test` job's pipeli
         run: |
           source $HOME/.local/bin/env
           cd ~/workspace/projects/chronos-seat
-          uv run python -c "
-          import polars as pl
-          from pathlib import Path
-          from datetime import date
-          p = Path('data/raw/' + date.today().isoformat())
-          p.mkdir(parents=True, exist_ok=True)
-          pl.DataFrame({'employee_id': ['EMP-001'], 'employee_name': ['Test'], 'employee_type': ['FULL-TIME'], 'position_id': ['POS-1001'], 'position_title': ['Test'], 'department_id': ['DEPT-ENG'], 'department_name': ['Eng'], 'cost_center': ['CC-5100'], 'hire_date': ['2025-01-01'], 'termination_date': [''], 'source_system': ['TEST']}).write_csv(str(p / 'erp_roster_test.csv'))
-          "
+          from chronos_seat.defs.ingestion.rawgen.assets import mock_erp_roster
+          mock_erp_roster(context=None)
       - name: Run dbt pipeline
         run: |
           source $HOME/.local/bin/env
@@ -3318,17 +3518,17 @@ The CI must create mock data before running dbt. Replace the `test` job's pipeli
 
 ### 17.8 Fix Makefile setup — Create All Data Directories
 
+→ [[#17. v3 Fixes — Critical Patches]]
+
 **File**: `Makefile`
 
-Update the `setup` target to create all required directories:
+The `setup` target creates all required directories. `data/{raw,silver,gold}/` were removed in v5 since DuckLake owns all Medallion layers internally:
 
 ```makefile
 setup:
 	uv sync
-	mkdir -p data/{raw,silver,gold}
 	mkdir -p data/change_requests/{inbox,approved,rejected,processing,archive}
 	mkdir -p data/entity_requests/{inbox,approved,rejected,processing,archive}
-	touch data/{raw,silver,gold}/.gitkeep
 	touch data/change_requests/{inbox,approved,rejected,processing,archive}/.gitkeep
 	touch data/entity_requests/{inbox,approved,rejected,processing,archive}/.gitkeep
 	cd dbt_project && uv run dbt deps

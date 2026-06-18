@@ -7,6 +7,6 @@ from dagster_duckdb import DuckDBResource  # Built-in Dagster-DuckDB integration
 # All schemas (bronze, silver, gold) live inside the DuckLake catalog via the
 # attach pattern in dbt_project/profiles.yml. Dagster connects directly via ducklake: URI.
 duckdb_resource = DuckDBResource(
-    # DuckLake catalog (ducklake: URI)
-    database="ducklake:./dbt_project/data/gold/chronos.ducklake",
+    # DuckLake catalog at project root (ducklake: URI)
+    database="ducklake:./data/chronos.ducklake",
 )

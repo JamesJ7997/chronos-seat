@@ -10,9 +10,6 @@ __pycache__/         # Python bytecode cache
 *.pyc                # Compiled Python files
 .env                 # Environment variables (injected at runtime, not baked in)
 .env.local           # Local env overrides (injected at runtime)
-data/raw/*           # Bronze data (generated inside container or mounted as volume)
-data/silver/*        # Silver data (generated inside container or mounted as volume)
-data/gold/*          # Gold data (generated inside container or mounted as volume)
 !.gitkeep            # Keep .gitkeep to preserve directory structure in the image
 tests/               # Test files (not needed in production image)
 *.md                 # Documentation (not needed in production image)

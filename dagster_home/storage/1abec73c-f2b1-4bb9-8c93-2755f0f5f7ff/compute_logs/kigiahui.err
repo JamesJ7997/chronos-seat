@@ -1,8 +1,0 @@
-2026-06-16 18:30:39 -0500 - dagster - DEBUG - __ASSET_JOB - 1abec73c-f2b1-4bb9-8c93-2755f0f5f7ff - 3354186 - LOGS_CAPTURED - Capturing logs for process (pid: 3354186).
-2026-06-16 18:30:39 -0500 - dagster - DEBUG - __ASSET_JOB - 1abec73c-f2b1-4bb9-8c93-2755f0f5f7ff - 3354186 - mock_contractor_tracking - STEP_START - Started execution of step "mock_contractor_tracking".
-2026-06-16 18:30:39 -0500 - dagster - INFO - __ASSET_JOB - 1abec73c-f2b1-4bb9-8c93-2755f0f5f7ff - mock_contractor_tracking - Wrote contractor tracking: data/raw/2026-06-16/contractor_tracking_20260616_183039.xlsx
-2026-06-16 18:30:39 -0500 - dagster - DEBUG - __ASSET_JOB - 1abec73c-f2b1-4bb9-8c93-2755f0f5f7ff - 3354186 - mock_contractor_tracking - STEP_OUTPUT - Yielded output "result" of type "DataFrame". (Type check passed).
-2026-06-16 18:30:39 -0500 - dagster - DEBUG - __ASSET_JOB - 1abec73c-f2b1-4bb9-8c93-2755f0f5f7ff - mock_contractor_tracking - Writing file at: /home/wolfj/workspace/projects/chronos-seat/dagster_home/storage/mock_contractor_tracking using PickledObjectFilesystemIOManager...
-2026-06-16 18:30:39 -0500 - dagster - DEBUG - __ASSET_JOB - 1abec73c-f2b1-4bb9-8c93-2755f0f5f7ff - 3354186 - mock_contractor_tracking - ASSET_MATERIALIZATION - Materialized value mock_contractor_tracking.
-2026-06-16 18:30:39 -0500 - dagster - DEBUG - __ASSET_JOB - 1abec73c-f2b1-4bb9-8c93-2755f0f5f7ff - 3354186 - mock_contractor_tracking - HANDLED_OUTPUT - Handled output "result" using IO manager "io_manager"
-2026-06-16 18:30:39 -0500 - dagster - DEBUG - __ASSET_JOB - 1abec73c-f2b1-4bb9-8c93-2755f0f5f7ff - 3354186 - mock_contractor_tracking - STEP_SUCCESS - Finished execution of step "mock_contractor_tracking" in 231ms.
