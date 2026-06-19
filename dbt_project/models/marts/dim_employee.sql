@@ -23,7 +23,7 @@ final as (
         hire_date,
         Null as termination_date,
         True as is_current,
-        hire_date as effective_start_date,
+        hire_date::Date as effective_start_date,
         '9999-12-31'::Date as effective_end_date,
         'ERP' as source_system,
         current_timestamp as inserted_at,

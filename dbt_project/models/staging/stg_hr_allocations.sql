@@ -5,14 +5,14 @@ with source as (
 ),
 cleaned as (
     select 
-        upper(trim(employee_id)) as employee_id,
-        initcap(trim(employee_name)) as employee_name,
-        upper(trim(position_id)) as position_id,
-        initcap(trim(position_title)) as position_title,
-        upper(trim(department_id)) as department_id,
-        allocatin_factor,
-        assignment_start,
-        assignment_end,
+        upper(trim(emp_id)) as employee_id,
+        trim({{ initcap('EmpName') }}) as employee_name,
+        upper(trim(pos_id)) as position_id,
+        trim({{ initcap('PosTitle') }}) as position_title,
+        upper(trim(dept_code)) as department_id,
+        alloc_factor as allocation_factor,
+        start_dt as assignment_start,
+        end_dt as assignment_end,
         current_timestamp as _loaded_at
     from source
 )

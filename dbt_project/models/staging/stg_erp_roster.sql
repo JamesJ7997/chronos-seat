@@ -6,7 +6,7 @@ with source as (
 cleaned as (
     select
         employee_id,
-        TRIM(employee_name) as employee_name,
+        trim({{ initcap('employee_name') }}) as employee_name,
         UPPER(TRIM(employee_type)) as employee_type,
         UPPER(TRIM(position_id)) as position_id,
         TRIM(position_title) as position_title,
@@ -19,4 +19,4 @@ cleaned as (
         current_timestamp as _loaded_at
     from source
 )
-selet * from cleaned
+select * from cleaned

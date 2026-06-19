@@ -8,9 +8,9 @@
 with allocations as (
     select
         employee_id,
-        position-id,
-        assignment_start
-        coalesce(assignment_end, '9999-12-31'::Date) as assignment_end,
+        position_id,
+        assignment_start::Date as assignment_start,
+        coalesce(nullif(assignment_end, ''), '9999-12-31')::Date as assignment_end,
         allocation_factor
     from {{ ref('stg_hr_allocations') }}
 ),
@@ -32,7 +32,7 @@ final as (
             else False
         end as is_overlap
     from allocations a 
-    left join {{ ref('dim_position') }} db on a.position_id = dp.position_id and dp.is_current = true 
+    left join {{ ref('dim_position') }} dp on a.position_id = dp.position_id and dp.is_current = true 
     left join {{ ref('dim_employee') }} de on a.employee_id = de.employee_id and de.is_current = true 
 )
 select * from final
