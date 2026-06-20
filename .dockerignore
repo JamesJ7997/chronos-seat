@@ -3,13 +3,23 @@
 # copied into Docker images (smaller builds, faster deploys).
 # ============================================================
 
-.git                 # Git history (not needed in image)
-.github              # GitHub Actions workflows (CI runs outside Docker)
-.venv/               # Virtual environment (rebuilt inside image via `uv sync`)
-__pycache__/         # Python bytecode cache
-*.pyc                # Compiled Python files
-.env                 # Environment variables (injected at runtime, not baked in)
-.env.local           # Local env overrides (injected at runtime)
-!.gitkeep            # Keep .gitkeep to preserve directory structure in the image
-tests/               # Test files (not needed in production image)
-*.md                 # Documentation (not needed in production image)
+# Git history (not needed in image)
+.git
+# GitHub Actions workflows (CI runs outside Docker)
+.github
+# Virtual environment (rebuilt inside image via `uv sync`)
+.venv/
+# Python bytecode cache
+__pycache__/
+# Compiled Python files
+*.pyc
+# Environment variables (injected at runtime, not baked in)
+.env
+# Local env overrides (injected at runtime)
+.env.local
+# Keep .gitkeep to preserve directory structure in the image
+!.gitkeep
+# Test files (not needed in production image)
+tests/
+# Documentation (not needed in production image)
+*.md

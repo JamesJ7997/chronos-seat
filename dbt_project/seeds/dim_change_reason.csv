@@ -1,6 +1,0 @@
-change_reason_sk,change_reason_name,description,is_active
-HIRING,Hiring,New employee onboarding,true
-REPLACEMENT,Replacement,Backfilling a departing employee,true
-RESTRUCTURE,Restructure,Organizational restructuring,true
-CONTRACT_END,Contract End,Contractor engagement ends,true
-PROMOTION,Promotion,Employee promoted to new role,true

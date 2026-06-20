@@ -1,159 +1,173 @@
-# ChronosSeat — Position-Centric Local Lakehouse
+# ChronosSeat
 
-A local-first data lakehouse for mapping, tracking, and visualizing position lifecycles. Built on the Duck ecosystem with Dagster orchestration, dbt transformations, and DuckLake storage — running entirely on WSL2 Ubuntu with no cloud dependencies.
+**A modern data platform for workforce analytics — built on ClickHouse, orchestrated by Dagster, and served through Rill.**
 
-## Tech Stack
+## What Problem Does This Solve?
 
-| Layer | Tool | Purpose |
-|---|---|---|
-| Package Management | `uv` | Fast Python dependency resolution |
-| Orchestration | Dagster 1.13 | Asset-based pipelines, lineage, scheduling |
-| Storage | DuckLake | ACID-compliant Parquet catalog with time-travel |
-| Transformation | dbt Core 1.11 | SQL modularity, `ref()`, incremental models |
-| Data Engine | DuckDB 1.5 | Embedded analytical database |
-| BI / Dashboards | Rill Developer | BI-as-code YAML dashboards (Phase 2) |
-| Deployment | Docker Compose | Portable, reproducible containers |
+ChronosSeat ingests workforce data from enterprise systems (SAP ERP, SharePoint, Excel) and transforms it into a queryable, dimensional data model. It is designed for analytics teams who need a self-contained, deployable analytics stack — no cloud dependencies, no vendor lock-in.
+
+Production data arrives as files. The system watches for new files, validates them, ingests them into ClickHouse, and runs a dbt transformation pipeline (bronze → silver → gold). Dashboards are served through Rill. All orchestration is handled by Dagster.
 
 ## Architecture
 
 ```
-[data/raw]          → Bronze (CSV, Parquet, Excel from Dagster mock assets)
-      ↓
-[data/silver]       → Silver (Polars cleaning: standardize names, types, casing)
-      ↓
-[DuckLake catalog]  → Gold (dbt dimensional models: dim_position, dim_employee, facts)
-      ↓
-[Rill / Portal]     → Dashboards and entity browser
+[SAP CSV] ──┐
+[SharePoint] ──┼──→ data/inbox/ ──→ Dagster sensor ──→ chronos_bronze.*
+[Excel] ──────┘                         │
+                                        ▼
+                              dbt models (SQL)
+                                        │
+                              ┌─────────┼─────────┐
+                              ▼                   ▼
+                      chronos_silver.*     chronos_gold.*
+                              │                   │
+                              ▼                   ▼
+                        Rill dashboards    Change request system
+                                           + Web portal
 ```
 
-**Medallion schema mapping:**
-- `bronze` — 1:1 views over raw data (date spine, staging tables)
-- `silver` — cleaned, deduplicated, conformed dimensions
-- `gold` — business-ready star schema (dims + facts) consumed by Rill
+## Technology Stack
 
-All three schemas live inside a single DuckLake catalog (`dbt_project/data/chronos.ducklake`) using the `attach` pattern, giving every layer Parquet-backed storage and snapshot history.
+| Layer | Technology | Role |
+|-------|-----------|------|
+| **OLAP Database** | ClickHouse 25.7+ | Stores all layers (bronze, silver, gold) as separate databases. Client-server architecture enables concurrent multi-user access. |
+| **Orchestration** | Dagster 1.13+ | Watches `data/inbox/` for new files via sensors. Materializes dbt models as Dagster assets. Supports scheduling and automation. |
+| **Transformation** | dbt-core + dbt-clickhouse | SQL-based Medallion pipeline. Seeds for reference data. Models for bronze mock generators, silver cleaning, and gold dimensional models. |
+| **BI / Dashboards** | Rill | Reads from `chronos_gold` ClickHouse database. Serves interactive dashboards over HTTP. |
+| **Web Portal** | Next.js (port 2319) | Entity browser + change request interface. Reads/writes ClickHouse via HTTP API. |
+| **Language** | Python 3.13 | Dagster assets, sensors, and Python-based transforms. |
 
-## Quick Start
+## Medallion Architecture
 
-### Prerequisites
+ClickHouse does not support schemas within databases — only databases and tables. Each Medallion layer maps to a separate ClickHouse database:
 
-- WSL2 Ubuntu
-- Python 3.13+
-- Node.js 18+ (for web portal, Phase 2)
-
-### Install
-
-```bash
-# 1. Clone and enter the project
-cd ~/workspace/projects
-git clone https://github.com/JamesJ7997/chronos-seat.git
-cd chronos-seat
-
-# 2. Install Python dependencies
-uv sync
-
-# 3. Set up Dagster home
-echo "DAGSTER_HOME=$(pwd)/dagster_home" > .env
-export DAGSTER_HOME=$(pwd)/dagster_home
-```
-
-### Run Mock Data Pipeline
-
-```bash
-# Materialize all mock data assets (generates CSV, Parquet, Excel in data/raw/)
-uv run dg launch --select "*"
-```
-
-### Start Dagster UI
-
-```bash
-uv run dg dev -h 0.0.0.0 -p 2320
-# Open http://localhost:2320 in your browser
-```
-
-### Run dbt (Section 6+)
-
-```bash
-# Install dbt packages
-cd dbt_project && uv run dbt deps && uv run dbt parse && cd ..
-
-# Materialize all Dagster assets (mock data → silver transforms → dbt build)
-uv run dg launch --select "*"
-```
+| Layer | ClickHouse Database | Content |
+|-------|-------------------|---------|
+| Bronze | `chronos_bronze` | Raw ingested data + mock generators. Seeds: departments, positions. Models: ERP roster, HR allocations, contractor tracking. |
+| Silver | `chronos_silver` | Cleaned, joined, deduplicated data. Incremental models where appropriate. |
+| Gold | `chronos_gold` | Business-ready dimensional models. SCD Type 2 dimensions. Fact tables. This is what Rill reads. |
 
 ## Project Structure
 
 ```
 chronos-seat/
-├── pyproject.toml              # Python package + deps (uv-managed)
-├── workspace.yaml              # Dagster workspace config
-├── dagster_home/               # Dagster instance (run history, event logs)
-│   └── dagster.yaml
-├── data/
-│   ├── raw/                    # Bronze: CSV, Parquet, Excel from Dagster
-│   ├── silver/                 # Silver: cleaned Parquet from Polars transforms
-│   └── gold/                   # Gold: business-ready Parquet (consumed by Rill)
-├── src/chronos_seat/
-│   ├── definitions.py          # Root Dagster Definitions
-│   └── defs/
-│       ├── ingestion/rawgen/   # Mock data assets + DuckDB resource
-│       └── transformation/
-│           ├── adhoc/          # Polars silver transforms
-│           └── dbt/            # DbtProject, dbt_assets, DbtCliResource
-├── dbt_project/
-│   ├── dbt_project.yml         # dbt config (schemas, materializations)
-│   ├── profiles.yml            # DuckLake attach config
-│   ├── packages.yml            # dbt_utils dependency
-│   ├── macros/                 # Jinja macros (generate_sk, generate_schema_name)
+├── Developer-Quickstart-ChronosSeat.md   ← Start here for setup instructions
+├── chronos-seat-blueprint.md              ← Architecture docs
+├── chronos-seat-roadmap.md                ← Phased development plan
+│
+├── dbt_project/                          ← dbt models, seeds, macros
 │   ├── models/
-│   │   ├── bronze/             # Views over raw data
-│   │   ├── silver/             # Incremental cleaned models
-│   │   └── gold/               # Business-ready dims + facts
-│   └── seeds/                  # CSV reference data (conformed dimensions)
-├── rill_dashboard/             # Rill BI-as-code (YAML sources + dashboards)
-├── tests/                      # pytest tests
-├── .github/workflows/ci.yml    # CI: lint → test → build
-└── docs/
-    └── Developer-Quickstart-ChronosSeat.md  # Full developer guide
+│   │   ├── bronze/                       ← Mock data generators (SQL)
+│   │   ├── silver/                       ← Cleaning + conformed transforms
+│   │   └── gold/                         ← Dimensional models (SCD Type 2)
+│   ├── seeds/
+│   │   ├── bronze/                       ← departments.csv, positions.csv
+│   │   └── gold/                         ← dim_change_type, dim_change_reason
+│   └── macros/                           ← Custom Jinja macros
+│
+├── src/chronos_seat/                     ← Python + Dagster
+│   ├── definitions.py                    ← Root Definitions (assets + resources)
+│   └── defs/
+│       ├── ingestion/rawgen/             ← File sensors + ingestion assets
+│       └── transformation/dbt/           ← DbtProject + DbtCliResource
+│
+├── rill_dashboard/                       ← Rill project
+│   ├── rill.yaml                         ← ClickHouse connector config
+│   └── connectors/clickhouse.yaml        ← Connection details
+│
+├── data/
+│   ├── inbox/                            ← Drop zone for production files
+│   ├── archive/                          ← Processed files (timestamped)
+│   └── change_requests/                  ← Approval workflow directories
+│
+├── tests/                                ← pytest test suite
+├── dagster_home/                         ← Dagster state (gitignored)
+├── Dockerfile                            ← Dagster host process image
+├── docker-compose.yml                    ← ClickHouse + Dagster + Rill + Portal
+├── pyproject.toml                        ├── Python dependencies (uv)
+└── Makefile                              ← Common commands
 ```
 
-## Development
+## Getting Started
 
-### Lint
+### Prerequisites
+
+- **WSL2 Ubuntu** (Linux native filesystem — `/mnt/c/` is 10x slower)
+- **Python 3.13** (`uv python install 3.13 && uv python pin 3.13`)
+- **uv** — [install docs](https://docs.astral.sh/uv/getting-started/installation/)
+- **Docker + Docker Compose** — for ClickHouse, Rill, and Portal containers
+- **Rill** — `curl -s https://rill.sh | sh`
+- **Node.js 18+** — for the web portal
+
+### Quick Setup
 
 ```bash
-uv run ruff check src/ tests/        # Check
-uv run ruff check src/ tests/ --fix  # Auto-fix
+# 1. Clone and enter the project
+cd ~/workspace/projects/chronos-seat
+
+# 2. Install Python dependencies
+uv sync
+
+# 3. Start ClickHouse (Docker)
+docker run -d \
+  --name clickhouse \
+  --ulimit nofile=262144:262144 \
+  -p 9000:9000 \
+  -p 8123:8123 \
+  -v clickhouse-data:/var/lib/clickhouse \
+  -e CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=1 \
+  clickhouse/clickhouse-server:latest
+
+# 4. Verify ClickHouse is running
+sleep 15
+clickhouse-client --host localhost --port 9000 --user default --query "SELECT 1"
+
+# 5. Load seed data (departments, positions)
+cd dbt_project && uv run dbt seed && cd ..
+
+# 6. Run bronze mock data models
+uv run dbt run --select bronze
+
+# 7. Start Dagster
+uv run dg dev -h 0.0.0.0 -p 2320
+# → http://localhost:2320
+
+# 8. Start Rill (separate terminal)
+rill start ./rill_dashboard --port 2321
+# → http://localhost:2321
 ```
 
-### Test
+### Running Tests
 
 ```bash
-uv run pytest tests/ -v
+make test          # pytest + dbt test
+make lint          # ruff check
+make format        # ruff format
 ```
 
-### Pre-commit
+## Development Workflow
 
-```bash
-uv run pre-commit install
-uv run pre-commit run --all-files
-```
+1. **Scaffold** — Run the scaffold script in §2 of the quickstart
+2. **Configure** — Populate `.env`, `pyproject.toml`, `profiles.yml`, `dbt_project.yml`
+3. **Start ClickHouse** — Docker container with `CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=1`
+4. **Load seeds** — `dbt seed` loads departments and positions into `chronos_bronze`
+5. **Run models** — `dbt run` generates mock transactional data
+6. **Orchestrate** — Dagster sensors watch `data/inbox/` for production files
+7. **Transform** — Silver and gold models clean and dimensionalize the data
+8. **Visualize** — Rill reads from `chronos_gold` for dashboards
 
-## Ports
+## Production Deployment
 
-| Service | Port | URL |
-|---|---|---|
-| Dagster UI | 2320 | http://localhost:2320 |
-| Rill | 2321 | http://localhost:2321 |
-| Web Portal | 2319 | http://localhost:2319 |
-| FastAPI | 2322 | http://localhost:2322 |
+The entire stack runs in Docker containers defined in `docker-compose.yml`:
 
-## Roadmap
+- **ClickHouse** — `clickhouse/clickhouse-server` (ports 9000, 8123)
+- **Dagster webserver + daemon** — built from project Dockerfile (port 2320)
+- **Rill** — `ghcr.io/rilldata/rill` (port 2321)
 
-- **Section 1-5**: ✅ Project scaffold, mock data, Dagster orchestration (complete)
-- **Section 6**: dbt transformation layer (models, seeds, DuckLake init)
-- **Section 7**: Rill dashboards
-- **Section 8-9**: Change request + entity management systems
-- **Section 10**: Next.js web portal
-- **Section 11**: Docker deployment
-- **Section 12**: Testing
+All containers connect via a shared Docker network (`chronos-net`). ClickHouse data persists in a Docker volume (`clickhouse-data`).
+
+## Learn More
+
+- [Developer Quickstart](Developer-Quickstart-ChronosSeat.md) — Step-by-step setup guide
+- [Architecture Blueprint](chronos-seat-blueprint.md) — Detailed architecture docs
+- [Roadmap](chronos-seat-roadmap.md) — Phased development plan

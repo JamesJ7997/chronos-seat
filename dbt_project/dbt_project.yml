@@ -30,20 +30,24 @@ clean-targets:                 # Directories cleaned by `dbt clean`
 # be in gold — not bronze or a separate reference schema.
 seeds:
   chronos_seat:
-    +schema: gold             # dim_date, dim_change_type, dim_change_reason, dim_department
+    gold:
+      +schema: gold             # dim_change_type, dim_change_reason, dim_department (dim_date is a dbt model, not a seed)
+
+    bronze:
+      +schema: bronze           # mock data generator departments(.csv) and positions(.csv)
 
 # --- Model materialization defaults by Medallion layer ---
-# bronze  = 1:1 views over raw data (lightweight, always current)
+# bronze  = raw ingested data (file-based or mock)
 # silver  = cleaned, joined, deduplicated (incremental for performance)
 # gold    = business-ready dimensional models (what Rill reads)
 models:
   chronos_seat:
     bronze:
       +materialized: view      # Bronze models are views: lightweight, always reflect latest raw data
-      +schema: bronze          # Bronze tables go into the "bronze" schema (matches data/raw/ folder)
+      +schema: bronze          # Bronze schema in ClickHouse (raw ingestion layer)
     silver:
       +materialized: incremental  # Silver models are incremental: append new rows, don't rebuild
-      +schema: silver          # Silver tables go into the "silver" schema (matches data/silver/ folder)
+      +schema: silver          # Silver schema in ClickHouse (cleaned/transformed layer)
     gold:
       +materialized: table     # Gold models are full tables: rebuilt each run for clean dimensional data
-      +schema: gold            # Gold tables go into the "gold" schema (matches data/gold/ folder, what Rill reads)
+      +schema: gold            # Gold schema in ClickHouse (dimensional models, what Rill reads)

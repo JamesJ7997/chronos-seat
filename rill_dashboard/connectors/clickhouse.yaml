@@ -1,0 +1,4 @@
+type: connector
+
+driver: clickhouse
+managed: true

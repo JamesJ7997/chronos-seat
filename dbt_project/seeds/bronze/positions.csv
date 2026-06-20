@@ -1,0 +1,21 @@
+position_id,position_title,department_id
+POS-1001,Sr. Data Engineer,DEPT-ENG
+POS-1002,Data Analyst,DEPT-ENG
+POS-1003,ML Engineer,DEPT-AIML
+POS-1004,Analytics Engineer,DEPT-DATA
+POS-1005,Data Engineer,DEPT-ENG
+POS-1006,Staff Engineer,DEPT-ENG
+POS-1007,VP Engineering,DEPT-ENG
+POS-1008,Data Scientist,DEPT-AIML
+POS-1009,Research Scientist,DEPT-AIML
+POS-1010,BI Analyst,DEPT-DATA
+POS-1011,Data Architect,DEPT-DATA
+POS-1012,Financial Analyst,DEPT-FIN
+POS-1013,Sr. Financial Analyst,DEPT-FIN
+POS-1014,HR Business Partner,DEPT-HR
+POS-1015,Recruiter,DEPT-HR
+POS-1016,Operations Manager,DEPT-OPS
+POS-1017,Marketing Manager,DEPT-MKT
+POS-1018,Content Strategist,DEPT-MKT
+POS-1019,Account Executive,DEPT-SALES
+POS-1020,Sales Engineer,DEPT-SALES

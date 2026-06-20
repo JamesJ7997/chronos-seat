@@ -1,6 +1,8 @@
 # ChronosSeat Roadmap
 
 > High-level execution plan. Aligned with the QuickStart — not a replacement for it. Usually the order is: **Blueprint → Roadmap → QuickStart**.
+>
+> **Note**: Backend migrated from DuckLake to ClickHouse (v4 architecture). DuckLake's file-level lock prevented concurrent multi-user access. ClickHouse is a client-server OLAP database that supports concurrent reads and writes natively.
 
 ---
 
@@ -8,22 +10,22 @@
 **Goal:** Mirror the QuickStart environment setup and initial DB state.
 
 **Key Actions:**
-- Install required stack (Python 3.13, dbt-core, DuckLake, FastAPI, Rill)
-- Verify `profiles.yaml` points to the DuckLake catalog and data path
-- Confirm the initial schema (staging, intermediate, mart tables) exists and is version-controlled
+- Install required stack (Python 3.13, dbt-core, dbt-clickhouse, ClickHouse, FastAPI, Rill)
+- Verify `profiles.yml` points to ClickHouse (host, port, schema)
+- Confirm the initial schema (bronze, silver, gold) exists and is version-controlled
 
 **QuickStart Alignment:** §§ 1–3 (Env Setup, Scaffolding, Config)
 
 ---
 
 ## Phase 2 — Data Ingestion & Seeding
-**Goal:** Build a reliable pipeline from source files to the DuckLake catalog.
+**Goal:** Build a reliable pipeline from source files to ClickHouse.
 
 **Key Actions:**
-- Implement file ingestion (raw → staging) using the surrogate-key macro (`generate_sk`)
+- Implement file ingestion (raw → bronze) using the surrogate-key macro (`generate_sk`)
 - Refactor `generate_sk` to use a configurable `effective_date` variable instead of a hard-coded literal
 - Create and validate seed data files for core dimensions (e.g., `dim_date`)
-- Ensure seeds populate the DuckLake tables without orphaned Parquet files
+- Ensure seeds populate ClickHouse tables correctly
 
 **QuickStart Alignment:** §§ 4–5 (Ingestion Layer, Dagster Orchestration)
 
@@ -84,7 +86,7 @@
 
 | Phase | Approx. Duration | Primary Deliverables |
 |-------|-----------------|----------------------|
-| Foundations | 2 weeks | Environment ready, catalog configured, initial DB schema in place |
+| Foundations | 2 weeks | Environment ready, ClickHouse running, initial DB schema in place |
 | Data Ingestion & Seeding | 3 weeks | File ingestion pipeline, surrogate-key macro, seed data validated |
 | Modeling Layer | 4 weeks | Complete dbt model suite, bridge tables, SCD handling |
 | Orchestration & Automation | 4 weeks | Dagster assets, schedules, sensors, integration with dbt |
@@ -101,9 +103,10 @@
 
 ## Success Criteria
 - A fresh environment can execute the QuickStart steps end-to-end without errors
-- Data flows from raw source files through staging, intermediate, and mart layers, ending in queryable DuckLake tables
-- Dagster pipelines run daily with no failures and clean up orphaned Parquet files automatically
+- Data flows from raw source files through staging, intermediate, and mart layers, ending in queryable ClickHouse tables
+- Dagster pipelines run daily with no failures
 - All dashboards reflect up-to-date data and are accessible via the Rill UI
+- Multiple users can view dashboards and submit change requests simultaneously
 
 ---
 

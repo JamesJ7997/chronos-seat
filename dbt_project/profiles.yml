@@ -6,17 +6,10 @@ chronos_seat:
   target: dev
   outputs:
     dev:
-      type: duckdb
-      extensions:
-        - ducklake
-      # DuckLake: .ducklake file = catalog metadata, .ducklake.files/ = Parquet data.
-      # Using `attach` so all schemas (bronze, silver, gold) live inside
-      # the DuckLake catalog — not as ghost schemas in DuckDB's main db.
-      attach:
-        - path: "ducklake:{{ env_var('DUCKLAKE_PATH', '../data/chronos.ducklake') }}"
-          alias: chronos
-          options:
-            data_path: "{{ env_var('DUCKLAKE_DATA_PATH', '../data/chronos.ducklake.files') }}"
-            override_data_path: true
-      database: chronos
+      type: clickhouse
+      schema: chronos          # ClickHouse database for dbt models
+      host: localhost          # ClickHouse server host
+      port: 9000               # ClickHouse native protocol port
+      user: default            # ClickHouse user
+      password: ""             # ClickHouse password (empty for local dev)
       threads: 4

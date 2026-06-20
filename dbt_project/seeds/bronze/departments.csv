@@ -1,0 +1,9 @@
+department_id,department_name,cost_center
+DEPT-ENG,Engineering,CC-5100
+DEPT-AIML,AI/ML,CC-5200
+DEPT-DATA,Data,CC-5300
+DEPT-FIN,Finance,CC-5400
+DEPT-HR,Human Resources,CC-5500
+DEPT-OPS,Operations,CC-5600
+DEPT-MKT,Marketing,CC-5700
+DEPT-SALES,Sales,CC-5800
