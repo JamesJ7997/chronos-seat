@@ -117,7 +117,7 @@ mkdir -p data/entity_requests/{inbox,approved,rejected,processing,archive}
 
 # dbt project — use dbt init to create the project scaffold
 # This creates dbt_project/, models/, macros/, seeds/, analysis/, dbt_project.yml, profiles.yml
-uv add dagster-dbt dbt-core dbt-clickhouse clickhouse-connect faker 
+uv add dagster-dbt dbt-core dbt-clickhouse clickhouse-connect faker
 uv run dbt init dbt_project
 touch dbt_project/profiles.yml
 touch dbt_project/packages.yml
@@ -138,8 +138,8 @@ rill init rill_dashboard
 # It prompts: "Run uv sync?" → choose "n" (uv add runs below, after all inits)
 uvx create-dagster@latest project .
 mkdir -p dagster_home
-touch dagster_home/dagster.yaml 
-touch dagster_home/packages.yaml 
+touch dagster_home/dagster.yaml
+touch dagster_home/packages.yaml
 
 # Note: folder name "chronos-seat" becomes package name "chronos_seat" (dashes → underscores)
 # This creates:
@@ -710,7 +710,7 @@ Load seeds:
 
 ```bash
 
-cd dbt_project 
+cd dbt_project
 uv run dbt deps
 uv run dbt seed
 ```
@@ -1442,7 +1442,7 @@ uv run dbt deps
 ```sql
 {#
 Converts a string to proper case (initial capitalization) while preserving the original punctuation, whitespace, and delimiter formatting. The macro identifies alphanumeric word tokens, capitalizes the first character of each word, lowercases the remaining characters, and then reconstructs the original string using the exact delimiters found between words.
-#} 
+#}
 
 {% macro initcap(input_string) %}
     array_to_string(
@@ -1644,7 +1644,7 @@ with source as (
     select * from bronze.hr_allocations
 ),
 cleaned as (
-    select 
+    select
         upper(trim(emp_id)) as employee_id,
         trim({{ initcap('EmpName') }}) as employee_name,
         upper(trim(pos_id)) as position_id,
@@ -1668,7 +1668,7 @@ with source as (
     select * from bronze.contractor_tracking
 ),
 cleaned as (
-    select 
+    select
         upper(trim(contractor_id)) as employee_id,
         initcap(trim(contractor_name)) as employee_name,
         upper(trim(position_id)) as position_id,
@@ -1741,7 +1741,7 @@ SELECT * FROM final
 }}
 
 with source as (
-    select distinct 
+    select distinct
         employee_id,
         employee_name,
         employee_type,
@@ -1779,7 +1779,7 @@ select * from final
 }}
 
 with source as (
-    select 
+    select
         employee_id,
         position_id,
         hire_date::Date as effective_date
@@ -1787,7 +1787,7 @@ with source as (
     where employee_type = 'FULL-TIME'
 ),
 events as (
-    select 
+    select
         md5(s.employee_id || '-' || s.position_id || '-' || cast(s.effective_date as varchar)) as event_id,
         dp.position_id,
         de.employee_sk,
@@ -1805,7 +1805,7 @@ events as (
         Null as superseded_by,
         md5(cast(current_timestamp as varchar)) as batch_id
     from source s
-        left join {{ ref('dim_position') }} dp on s.position_id = dp.position_id and dp.is_current = True 
+        left join {{ ref('dim_position') }} dp on s.position_id = dp.position_id and dp.is_current = True
         left join {{ ref('dim_employee') }} de on s.employee_id = de.employee_id and de.is_current = True
 )
 select * from events
@@ -1832,13 +1832,13 @@ with allocations as (
     from {{ ref('stg_hr_allocations') }}
 ),
 final as (
-    select 
+    select
         dp.position_sk,
         de.employee_sk,
         a.assignment_start,
         a.assignment_end,
         a.allocation_factor,
-        case 
+        case
             when exists(
                 select 1 from allocations a2
                 where a2.position_id = a.position_id
@@ -1848,9 +1848,9 @@ final as (
             ) then True
             else False
         end as is_overlap
-    from allocations a 
-    left join {{ ref('dim_position') }} dp on a.position_id = dp.position_id and dp.is_current = true 
-    left join {{ ref('dim_employee') }} de on a.employee_id = de.employee_id and de.is_current = true 
+    from allocations a
+    left join {{ ref('dim_position') }} dp on a.position_id = dp.position_id and dp.is_current = true
+    left join {{ ref('dim_employee') }} de on a.employee_id = de.employee_id and de.is_current = true
 )
 select * from final
 ```

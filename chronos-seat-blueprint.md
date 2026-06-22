@@ -196,7 +196,7 @@ def ingest_erp_roster(context: AssetExecutionContext) -> pl.DataFrame:
     if not files:
         context.log.info("No ERP roster files in inbox")
         return pl.DataFrame()
-    
+
     df = pl.read_csv(files[-1])  # Process most recent file
     # Validate required columns
     # Write to bronze.erp_roster (full refresh — bronze is raw)

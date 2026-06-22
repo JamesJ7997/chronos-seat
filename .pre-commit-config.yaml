@@ -1,0 +1,34 @@
+# ============================================================
+# Pre-commit hooks — run on `git commit` before code is committed.
+# Install: `uv run pre-commit install`
+# Run manually: `uv run pre-commit run --all-files`
+# ============================================================
+
+repos:
+  # --- General file cleanup hooks (pre-commit-hooks) ---
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0                              # Pin version for reproducible hooks
+    hooks:
+      - id: trailing-whitespace              # Remove trailing spaces from all files
+      - id: end-of-file-fixer                # Ensure files end with exactly one newline
+      - id: check-yaml                       # Validate YAML syntax (fail on malformed YAML)
+      - id: check-json                       # Validate JSON syntax
+      - id: check-toml                       # Validate TOML syntax (pyproject.toml, etc.)
+      - id: check-added-large-files          # Prevent accidentally committing large binaries
+        args: ['--maxkb=500']                # Max file size: 500 KB
+
+  # --- Python linting and formatting (ruff) ---
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.5.0
+    hooks:
+      - id: ruff                             # Static analysis: catch bugs, unused imports, style issues
+        args: [--fix]                        # auto-fix issues where possible (e.g. remove unused imports)
+      - id: ruff-format                      # Auto-format code (like black, but faster)
+
+  # --- SQL linting (sqlfluff) ---
+  - repo: https://github.com/sqlfluff/sqlfluff
+    rev: 3.1.0
+    hooks:
+      - id: sqlfluff-lint                    # Lint .sql files for style and correctness
+        args: [--dialect, clickhouse, --exclude-rules, RF02]  # ClickHouse dialect; skip unqualified ref checks
+        files: \\.sql$                        # Only run on .sql files (dbt models, analyses)

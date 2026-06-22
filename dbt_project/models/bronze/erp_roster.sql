@@ -5,73 +5,93 @@
 }}
 WITH
 employee_count AS (
-    SELECT
-        80 + (toDayOfYear(today()) % 21) AS cnt
+    SELECT 80 + (TODAYOFYEAR(TODAY()) % 21) AS cnt
 ),
+
 employees AS (
-    SELECT
-        number + 1 AS employee_num
-    FROM numbers(
-        (SELECT cnt FROM employee_count)
-    )
+    SELECT number + 1 AS employee_num
+    FROM NUMBERS(ASSUMENOTNULL((SELECT cnt FROM employee_count)))
 ),
+
 positions AS (
     SELECT
         *,
-        row_number() OVER (ORDER BY position_id) - 1 AS pos_idx
+        ROW_NUMBER() OVER (ORDER BY position_id) - 1 AS pos_idx
     FROM {{ ref('positions') }}
 ),
+
 employee_base AS (
     SELECT
         employee_num,
-        format('EMP-%04d', employee_num) AS employee_id,
-        concat(
-            arrayElement(
+        CONCAT('EMP-', LPAD(TOSTRING(employee_num), 4, '0')) AS employee_id,
+        CONCAT(
+            ARRAYELEMENT(
                 [
-                    'James','John','Sarah','Emma','Michael',
-                    'David','Lisa','Mary','Robert','Jennifer',
-                    'William','Linda','Patricia','Barbara',
-                    'Daniel','Matthew','Andrew','Karen'
+                    'Alice',
+                    'Bob',
+                    'Carol',
+                    'David',
+                    'Eve',
+                    'Frank',
+                    'Grace',
+                    'Henry',
+                    'Iris',
+                    'Jack',
+                    'Karen',
+                    'Leo',
+                    'Mia',
+                    'Noah',
+                    'Olivia',
+                    'Paul',
+                    'Quinn',
+                    'Rose',
+                    'Sam',
+                    'Tina'
                 ],
-                (cityHash64(employee_num) % 18) + 1
+                (CITYHASH64(employee_num) % 20) + 1
             ),
             ' ',
-            arrayElement(
+            ARRAYELEMENT(
                 [
-                    'Smith','Johnson','Brown','Davis','Wilson',
-                    'Moore','Taylor','Thomas','White','Martin',
-                    'Anderson','Jackson','Harris','Clark',
-                    'Lewis','Walker','Hall','Young'
+                    'Johnson',
+                    'Smith',
+                    'Williams',
+                    'Brown',
+                    'Davis',
+                    'Miller',
+                    'Wilson',
+                    'Moore',
+                    'Taylor',
+                    'Anderson',
+                    'Thomas',
+                    'Jackson',
+                    'White',
+                    'Harris',
+                    'Martin',
+                    'Thompson',
+                    'Garcia',
+                    'Martinez',
+                    'Robinson'
                 ],
-                (cityHash64(employee_num * 17) % 18) + 1
+                (CITYHASH64(employee_num * 17) % 19) + 1
             )
         ) AS employee_name,
-        arrayElement(
-            [
-                'FULL-TIME',
-                'FULL-TIME',
-                'FULL-TIME',
-                'CONTRACTOR',
-                'INTERN'
-            ],
-            (cityHash64(employee_num * 13) % 5) + 1
+        ARRAYELEMENT(
+            ['FULL-TIME', 'FULL-TIME', 'FULL-TIME', 'CONTRACTOR', 'INTERN'],
+            (CITYHASH64(employee_num * 13) % 5) + 1
         ) AS employee_type,
-        cityHash64(employee_num * 7) % 20 AS pos_idx,
-        toDate('2023-01-01')
-            + toIntervalDay(
-                cityHash64(employee_num * 31)
-                % (
-                    dateDiff(
-                        'day',
-                        toDate('2023-01-01'),
-                        today()
-                    ) + 1
-                )
-            ) AS hire_date,
-        cityHash64(employee_num * 19) % 100 < 15
-            AS is_terminated
+        CITYHASH64(employee_num * 7) % 20 AS pos_idx,
+        TODATE('2023-01-01')
+        + TOINTERVALDAY(
+            CITYHASH64(employee_num * 31)
+            % (
+                DATEDIFF('day', TODATE('2023-01-01'), TODAY()) + 1
+            )
+        ) AS hire_date,
+        CITYHASH64(employee_num * 19) % 100 < 15 AS is_terminated
     FROM employees
 )
+
 SELECT
     e.employee_id,
     e.employee_name,
@@ -82,24 +102,19 @@ SELECT
     d.department_name,
     d.cost_center,
     e.hire_date,
-    if(
+    'ERP' AS source_system,
+    IF(
         e.is_terminated,
-        toString(
-            least(
+        TOSTRING(
+            LEAST(
                 e.hire_date
-                    + toIntervalDay(
-                        30 + (
-                            cityHash64(employee_num * 23) % 335
-                        )
-                    ),
-                today()
+                + TOINTERVALDAY(30 + (CITYHASH64(employee_num * 23) % 335)),
+                TODAY()
             )
         ),
         ''
     ) AS termination_date,
-    'ERP' AS source_system
-FROM employee_base e
-JOIN positions p
-    ON e.pos_idx = p.pos_idx
-JOIN {{ ref('departments') }} d
-    ON p.department_id = d.department_id
+    IF(e.is_terminated, 'TERMINATED', 'ACTIVE') AS employment_status
+FROM employee_base AS e
+INNER JOIN positions AS p ON e.pos_idx = p.pos_idx
+INNER JOIN {{ ref('departments') }} AS d ON p.department_id = d.department_id

@@ -1,0 +1,34 @@
+# ============================================================
+# CI pipeline — runs on every push and PR to main.
+# Three-stage pipeline: lint → test → build.
+# ============================================================
+name: CI
+
+# --- Trigger conditions ---
+on:
+    push:
+        branches: [main]        # Run on direct pushes to main (after merge)
+    pull_request:
+        branches: [main]        # Run on PRs targeting main (before merge)
+
+# --- Job definitions ---
+jobs:
+    # State 1: Lint - check code quiality and formatting
+    lint:
+        runs-on: ubuntu-latest      # GitHub-hosted runner with Ubuntu
+        steps:
+            - uses: actions/checkout@v4             # Check out repo code
+            - uses: actions/setup-python@v5         # Install Python 3.13
+              with:
+                python-version: "3.13"              # Match project's Python version (dbt-core constraint)
+            - name: Install uv
+              run: curl -LsSf https://astral.sh/uv/install.sh | sh      # uv = fast Python package manager
+            - name: Install dependencies
+              run: |
+                source $HOME/.local/bin/env         # Add uv to PATH
+                uv sync                             # Install all deps from uv.lock
+            - name: Lint
+              run: |
+                source $HOME/.local/bin/env
+                uv run ruff check src/ tests/               # Static analysis: catch bugs, unused imports
+                uv run ruff format --check src/ tests/      # Format check: ensure concistent style (fails if unformatted)

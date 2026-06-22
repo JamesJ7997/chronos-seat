@@ -117,7 +117,7 @@ mkdir -p data/entity_requests/{inbox,approved,rejected,processing,archive}
 
 # dbt project — use dbt init to create the project scaffold
 # This creates dbt_project/, models/, macros/, seeds/, analysis/, dbt_project.yml, profiles.yml
-uv add dagster-dbt dbt-core dbt-clickhouse clickhouse-connect faker 
+uv add dagster-dbt dbt-core dbt-clickhouse clickhouse-connect faker
 uv run dbt init dbt_project
 touch dbt_project/profiles.yml
 touch dbt_project/packages.yml
@@ -138,8 +138,8 @@ rill init rill_dashboard
 # It prompts: "Run uv sync?" → choose "n" (uv add runs below, after all inits)
 uvx create-dagster@latest project .
 mkdir -p dagster_home
-touch dagster_home/dagster.yaml 
-touch dagster_home/packages.yaml 
+touch dagster_home/dagster.yaml
+touch dagster_home/packages.yaml
 
 # Note: folder name "chronos-seat" becomes package name "chronos_seat" (dashes → underscores)
 # This creates:
@@ -710,7 +710,7 @@ Load seeds:
 
 ```bash
 
-cd dbt_project 
+cd dbt_project
 uv run dbt deps
 uv run dbt seed
 ```
@@ -723,7 +723,7 @@ uv run dbt seed
 
 #### dbt Models — Mock Transactional Data
 
-**dbt_project/models/bronze/bronze_erp_roster.sql** — 100 employees with deterministic random data via ClickHouse `cityHash64`. Hire dates from 2023 through today. 15% termination rate.
+**dbt_project/models/bronze/erp_roster.sql** — 100 employees with deterministic random data via ClickHouse `cityHash64`. Hire dates from 2023 through today. 15% termination rate.
 
 ```sql
 {{
@@ -731,9 +731,13 @@ uv run dbt seed
         materialized='table'
     )
 }}
-WITH employees AS (
+WITH
+employee_count AS (
+    SELECT 80 + (toDayOfYear(today()) % 21) AS cnt
+),
+employees AS (
     SELECT number + 1 AS employee_num
-    FROM numbers(100)
+    FROM numbers(assumeNotNull((SELECT cnt FROM employee_count)))
 ),
 positions AS (
     SELECT
@@ -744,7 +748,7 @@ positions AS (
 employee_base AS (
     SELECT
         employee_num,
-        format('EMP-%04d', employee_num) AS employee_id,
+        concat('EMP-', lpad(toString(employee_num), 4, '0')) AS employee_id,
         concat(
             arrayElement(
                 ['James','John','Sarah','Emma','Michael',
@@ -771,9 +775,9 @@ SELECT
     e.employee_type,
     p.position_id,
     p.position_title,
-    d.department_id,
-    d.department_name,
-    d.cost_center,
+    d.department_id AS department_id,
+    d.department_name AS department_name,
+    d.cost_center AS cost_center,
     toDate('2023-01-01')
         + toIntervalDay(
             cityHash64(employee_num * 31)
@@ -800,7 +804,7 @@ JOIN {{ ref('departments') }} d
 SETTINGS join_use_nulls = 0
 ```
 
-**dbt_project/models/bronze/bronze_hr_allocations.sql** — 100 allocation records with messy casing. Dates from 2023 through today. 60% ongoing.
+**dbt_project/models/bronze/hr_allocations.sql** — 100 allocation records with messy casing. Dates from 2023 through today. 60% ongoing.
 
 ```sql
 {{
@@ -808,9 +812,16 @@ SETTINGS join_use_nulls = 0
         materialized='table'
     )
 }}
-WITH allocations AS (
+WITH
+allocation_count AS (
+    SELECT
+        80 + (toDayOfYear(today()) % 21) AS cnt
+),
+allocations AS (
     SELECT number + 1 AS allocation_num
-    FROM numbers(100)
+    FROM numbers(
+        assumeNotNull((SELECT cnt FROM allocation_count))
+    )
 ),
 positions AS (
     SELECT
@@ -819,7 +830,7 @@ positions AS (
     FROM {{ ref('positions') }}
 )
 SELECT
-    format('EMP-%04d', (cityHash64(allocation_num * 5) % 100) + 1) AS emp_id,
+    concat('EMP-', lpad(toString((cityHash64(allocation_num * 5) % 100) + 1), 4, '0')) AS emp_id,
     if(
         cityHash64(allocation_num) % 2 = 0,
         lower(concat('employee ', toString(allocation_num))),
@@ -864,7 +875,7 @@ CROSS JOIN (
 ) AS date_calc
 ```
 
-**dbt_project/models/bronze/bronze_contractor_tracking.sql** — 100 contractor records with overlapping dates from 2023 through today.
+**dbt_project/models/bronze/contractor_tracking.sql** — 100 contractor records with overlapping dates from 2023 through today.
 
 ```sql
 {{
@@ -873,7 +884,13 @@ CROSS JOIN (
     )
 }}
 WITH contractors AS (
-    SELECT number + 1 AS contractor_num
+    SELECT
+        number + 1 AS contractor_num,
+        toDate('2023-01-01')
+            + toIntervalDay(
+                cityHash64((number + 1) * 31)
+                % dateDiff('day', toDate('2023-01-01'), today())
+            ) AS start_date
     FROM numbers(100)
 ),
 positions AS (
@@ -883,15 +900,15 @@ positions AS (
     FROM {{ ref('positions') }}
 )
 SELECT
-    format('CTR-%04d', contractor_num) AS contractor_id,
+    concat('CTR-', lpad(toString(contractor_num), 4, '0')) AS contractor_id,
     concat('Contractor ', contractor_num) AS contractor_name,
-    p.position_id,
-    start_date,
+    p.position_id AS position_id,
+    c.start_date,
     if(
         cityHash64(contractor_num * 17) % 100 < 40,
         toString(
             least(
-                start_date + toIntervalDay(
+                c.start_date + toIntervalDay(
                     30 + cityHash64(contractor_num * 19) % 335
                 ),
                 today()
@@ -906,14 +923,6 @@ SELECT
 FROM contractors c
 JOIN positions p
     ON (cityHash64(contractor_num * 7) % 20) = p.pos_idx
-CROSS JOIN (
-    SELECT
-        toDate('2023-01-01')
-        + toIntervalDay(
-            cityHash64(contractor_num * 31)
-            % dateDiff('day', toDate('2023-01-01'), today())
-        ) AS start_date
-) AS date_calc
 ```
 
 Run the models:
@@ -945,6 +954,61 @@ clickhouse_resource = ClickhouseResource(
     password="",
     database="chronos",
 )
+```
+
+### 4.4 dbt Assets
+
+→ [[#4. Mock Data Generator]]
+
+**src/chronos_seat/defs/transformation/dbt/project.py** — DbtProject configuration — tells Dagster where the dbt project lives (`dbt_project/`) and how to invoke it.
+```python
+"""Shared DbtProject instance — used by both assets and resources."""
+
+from pathlib import Path
+
+from dagster_dbt import DbtProject
+
+# DbtProject auto-generates the manifest and points to the dbt project directory
+dbt_project = DbtProject(
+    project_dir=Path(__file__).resolve().parent.parent.parent.parent.parent.parent / "dbt_project",
+    prepare_project_cli_args=["--quiet"],
+)
+dbt_project.prepare_if_dev()  # Generates manifest.json in dev
+
+```
+
+**src/chronos_seat/defs/transformation/dbt/assets.py** — dbt asset definitions — loads all dbt models from `manifest.json` and creates Dagster assets for each. Enables Dagster to orchestrate dbt runs.
+```python
+"""Dagster-dbt integration — wraps dbt models as Dagster assets using DbtProject."""
+
+from dagster import AssetExecutionContext
+from dagster_dbt import DbtCliResource, dbt_assets
+
+from chronos_seat.defs.transformation.dbt.project import dbt_project
+
+
+@dbt_assets(manifest=dbt_project.manifest_path)
+def dbt_models(context: AssetExecutionContext, dbt: DbtCliResource):
+    """All dbt models as Dagster assets."""
+    yield from dbt.cli(["build"], context=context).stream()
+
+```
+
+**src/chronos_seat/defs/transformation/dbt/resources.py** — DbtCliResource — the Dagster resource that invokes `dbt` CLI commands. Configured with the project directory and profiles directory.
+```python
+"""dbt resource — DbtCliResource pointing to the DbtProject directory."""
+
+from dagster_dbt import DbtCliResource
+
+from chronos_seat.defs.transformation.dbt.project import dbt_project
+
+# DbtCliResource runs dbt commands (build, test, etc.) from Dagster
+# The project_dir and profiles_dir point to the dbt_project/ directory
+dbt_resource = DbtCliResource(
+    project_dir=str(dbt_project.project_dir),  # Reuse the DbtProject path
+    profiles_dir=str(dbt_project.project_dir),  # profiles.yml lives in dbt_project/
+)
+
 ```
 
 ### 4.5 Definitions
@@ -995,19 +1059,23 @@ uv run dbt build
 
 > **Note:** The mock data is generated by ClickHouse SQL in dbt models — no Python Dagster assets needed. In production, file-based ingestion assets (§4.3) replace these models.
 
-# Make sure the "chronos" database exists prior to running dbt
+#### Make sure the "chronos" database exists prior to running dbt
+```bash
 clickhouse-client --host localhost --port 9000 --user default --query "CREATE DATABASE IF NOT EXISTS chronos;"
+```
 
-# Start Dagster — dg dev starts BOTH the webserver and daemon.
+#### Start Dagster — dg dev starts BOTH the webserver and daemon.
+```bash
 uv run dg dev -h 0.0.0.0 -p 2320
+```
 
-# In the Dagster UI (http://localhost:2320):
-#   1. Go to "Assets" tab
-#   2. Select all bronze models (bronze_erp_roster, bronze_hr_allocations, bronze_contractor_tracking)
-#   3. Click "Materialize selected"
-#   Or materialize all assets at once with the "Materialize all" button
-#
-# Or materialize via CLI (from project root, Dagster does not need to be running):
+##### In the Dagster UI (http://localhost:2320):
+1. Go to "Assets" tab
+2. Select all bronze models (bronze_erp_roster, bronze_hr_allocations, bronze_contractor_tracking)
+3. Click "Materialize selected"
+Or materialize all assets at once with the "Materialize all" button
+
+##### Or materialize via CLI (from project root, Dagster does not need to be running):
 uv run dg launch --assets "*"
 ```
 
@@ -1031,7 +1099,7 @@ Now that you have working code, set up CI/CD so every push is automatically vali
 ```yaml
 # ============================================================
 # CI pipeline — runs on every push and PR to main.
-# Three-stage pipeline: lint → test → build.
+# Stage 1: Lint (here). Stage 2: Test (added in §12.3). Stage 3: Build (added in §11.3).
 # ============================================================
 name: CI
 
@@ -1064,43 +1132,6 @@ jobs:
           uv run ruff check src/ tests/              # Static analysis: catch bugs, unused imports
           uv run ruff format --check src/ tests/     # Format check: ensure consistent style (fails if unformatted)
 
-  # Stage 2: Test — run dbt pipeline + pytest (depends on lint passing)
-  test:
-    runs-on: ubuntu-latest
-    needs: lint                  # Only run if lint job succeeds
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.13"
-      - name: Install uv
-        run: curl -LsSf https://astral.sh/uv/install.sh | sh
-      - name: Install all dependencies
-        run: |
-          source $HOME/.local/bin/env
-          uv sync                   # Install Python deps
-          cd dbt_project && uv run dbt deps   # Install dbt packages (dbt_utils, etc.)
-      - name: Run pipeline
-        run: |
-          source $HOME/.local/bin/env
-          cd dbt_project && uv run dbt seed && uv run dbt build   # Load seeds → build all models
-      - name: Run tests
-        run: |
-          source $HOME/.local/bin/env
-          cd dbt_project && uv run dbt test   # Run dbt data tests (schema + custom)
-          uv run pytest tests/ -v             # Run Python unit/integration tests
-
-  # Stage 3: Build — validate Docker image + compose (depends on test passing)
-  build:
-    runs-on: ubuntu-latest
-    needs: test                  # Only run if test job succeeds
-    steps:
-      - uses: actions/checkout@v4
-      - name: Build Docker image
-        run: docker build -t chronos-seat:test .    # Build image to validate Dockerfile syntax
-      - name: Validate compose
-        run: docker compose config                  # Validate docker-compose.yml (no errors = pass)
-
 ```
 
 **.pre-commit-config.yaml** — Pre-commit hooks — ruff linting, trailing whitespace, YAML validation, debug statement checks.
@@ -1108,8 +1139,8 @@ jobs:
 ```yaml
 # ============================================================
 # Pre-commit hooks — run on `git commit` before code is committed.
-# Install: `uv run pre-commit install`
-# Run manually: `uv run pre-commit run --all-files`
+# Install: `uvx pre-commit install`
+# Run manually: `uvx pre-commit run --all-files`
 # ============================================================
 repos:
   # --- General file cleanup hooks (pre-commit-hooks) ---
@@ -1142,10 +1173,10 @@ repos:
 
 ```
 
-Install pre-commit hooks locally:
+Install pre-commit hooks locally (uses `uvx` — no need to add pre-commit to pyproject.toml):
 
 ```bash
-uv run pre-commit install
+uvx uvx pre-commit install
 ```
 
 Commit everything to GitHub:
@@ -1163,90 +1194,8 @@ git push origin main
 
 → [[#Table of Contents]]
 
-### 5.1 dbt Assets
 
-→ [[#5. Dagster Orchestration]]
-
-**src/chronos_seat/defs/transformation/dbt/project.py** — DbtProject configuration — tells Dagster where the dbt project lives (`dbt_project/`) and how to invoke it.
-```python
-"""Shared DbtProject instance — used by both assets and resources."""
-
-from pathlib import Path
-
-from dagster_dbt import DbtProject
-
-# DbtProject auto-generates the manifest and points to the dbt project directory
-dbt_project = DbtProject(
-    project_dir=Path(__file__).resolve().parent.parent.parent.parent.parent.parent / "dbt_project",
-    prepare_project_cli_args=["--quiet"],
-)
-dbt_project.prepare_if_dev()  # Generates manifest.json in dev
-
-```
-
-**src/chronos_seat/defs/transformation/dbt/assets.py** — dbt asset definitions — loads all dbt models from `manifest.json` and creates Dagster assets for each. Enables Dagster to orchestrate dbt runs.
-```python
-"""Dagster-dbt integration — wraps dbt models as Dagster assets using DbtProject."""
-
-from dagster import AssetExecutionContext
-from dagster_dbt import DbtCliResource, dbt_assets
-
-from chronos_seat.defs.transformation.dbt.project import dbt_project
-
-
-@dbt_assets(manifest=dbt_project.manifest_path)
-def dbt_models(context: AssetExecutionContext, dbt: DbtCliResource):
-    """All dbt models as Dagster assets."""
-    yield from dbt.cli(["build"], context=context).stream()
-
-```
-
-
-**src/chronos_seat/defs/transformation/dbt/resources.py** — DbtCliResource — the Dagster resource that invokes `dbt` CLI commands. Configured with the project directory and profiles directory.
-```python
-"""dbt resource — DbtCliResource pointing to the DbtProject directory."""
-
-from chronos_seat.defs.transformation.dbt.project import dbt_project
-from dagster_dbt import DbtCliResource
-
-# DbtCliResource runs dbt commands (build, test, etc.) from Dagster
-# The project_dir and profiles_dir point to the dbt_project/ directory
-dbt_resource = DbtCliResource(
-    project_dir=str(dbt_project.project_dir),  # Reuse the DbtProject path
-    profiles_dir=str(dbt_project.project_dir),  # profiles.yml lives in dbt_project/
-)
-
-```
-
-
-**Update `src/chronos_seat/definitions.py`** to include the dbt assets and dbt resource:
-```python
-"""Root Dagster definitions — merges all assets, resources, and sensors."""
-
-from dagster import Definitions, load_assets_from_modules
-
-from chronos_seat.defs.ingestion.rawgen.resources import clickhouse_resource
-from chronos_seat.defs.transformation.dbt.assets import (
-    dbt_models,
-)  # @dbt_assets from DbtProject
-from chronos_seat.defs.transformation.dbt.resources import dbt_resource
-
-all_assets = [
-    dbt_models,  # dbt models as Dagster assets (bronze → silver → gold)
-]
-
-defs = Definitions(
-    assets=all_assets,
-    resources={
-        "clickhouse": clickhouse_resource,  # ClickhouseResource from dagster-clickhouse
-        "dbt": dbt_resource,  # DbtCliResource - runs dbt commands from Dagster
-    },
-)
-```
-
----
-
-### 5.2 Running Dagster Assets
+### 5.1 Running Dagster Assets
 
 → [[#5. Dagster Orchestration]]
 
@@ -1320,7 +1269,7 @@ uv run dbt deps
 ```sql
 {#
 Converts a string to proper case (initial capitalization) while preserving the original punctuation, whitespace, and delimiter formatting. The macro identifies alphanumeric word tokens, capitalizes the first character of each word, lowercases the remaining characters, and then reconstructs the original string using the exact delimiters found between words.
-#} 
+#}
 
 {% macro initcap(input_string) %}
     array_to_string(
@@ -1522,7 +1471,7 @@ with source as (
     select * from bronze.hr_allocations
 ),
 cleaned as (
-    select 
+    select
         upper(trim(emp_id)) as employee_id,
         trim({{ initcap('EmpName') }}) as employee_name,
         upper(trim(pos_id)) as position_id,
@@ -1546,7 +1495,7 @@ with source as (
     select * from bronze.contractor_tracking
 ),
 cleaned as (
-    select 
+    select
         upper(trim(contractor_id)) as employee_id,
         initcap(trim(contractor_name)) as employee_name,
         upper(trim(position_id)) as position_id,
@@ -1619,7 +1568,7 @@ SELECT * FROM final
 }}
 
 with source as (
-    select distinct 
+    select distinct
         employee_id,
         employee_name,
         employee_type,
@@ -1657,7 +1606,7 @@ select * from final
 }}
 
 with source as (
-    select 
+    select
         employee_id,
         position_id,
         hire_date::Date as effective_date
@@ -1665,7 +1614,7 @@ with source as (
     where employee_type = 'FULL-TIME'
 ),
 events as (
-    select 
+    select
         md5(s.employee_id || '-' || s.position_id || '-' || cast(s.effective_date as varchar)) as event_id,
         dp.position_id,
         de.employee_sk,
@@ -1683,7 +1632,7 @@ events as (
         Null as superseded_by,
         md5(cast(current_timestamp as varchar)) as batch_id
     from source s
-        left join {{ ref('dim_position') }} dp on s.position_id = dp.position_id and dp.is_current = True 
+        left join {{ ref('dim_position') }} dp on s.position_id = dp.position_id and dp.is_current = True
         left join {{ ref('dim_employee') }} de on s.employee_id = de.employee_id and de.is_current = True
 )
 select * from events
@@ -1710,13 +1659,13 @@ with allocations as (
     from {{ ref('stg_hr_allocations') }}
 ),
 final as (
-    select 
+    select
         dp.position_sk,
         de.employee_sk,
         a.assignment_start,
         a.assignment_end,
         a.allocation_factor,
-        case 
+        case
             when exists(
                 select 1 from allocations a2
                 where a2.position_id = a.position_id
@@ -1726,9 +1675,9 @@ final as (
             ) then True
             else False
         end as is_overlap
-    from allocations a 
-    left join {{ ref('dim_position') }} dp on a.position_id = dp.position_id and dp.is_current = true 
-    left join {{ ref('dim_employee') }} de on a.employee_id = de.employee_id and de.is_current = true 
+    from allocations a
+    left join {{ ref('dim_position') }} dp on a.position_id = dp.position_id and dp.is_current = true
+    left join {{ ref('dim_employee') }} de on a.employee_id = de.employee_id and de.is_current = true
 )
 select * from final
 ```
@@ -3026,7 +2975,22 @@ networks:
     driver: bridge
     name: chronos-net
 ```
-    name: chronos-net
+
+### 11.3 CI/CD — Add Build Stage
+
+After creating the Dockerfile and docker-compose.yml above, add Stage 3 to `.github/workflows/ci.yml`:
+
+```yaml
+  # Stage 3: Build — validate Docker image + compose (depends on test passing)
+  build:
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build Docker image
+        run: docker build -t chronos-seat:test .
+      - name: Validate compose
+        run: docker compose config
 ```
 
 > **Key differences from local dev**:
@@ -3073,7 +3037,7 @@ setup:
 	# Write dagster.yaml inside dagster_home/ — Dagster reads $DAGSTER_HOME/dagster.yaml at startup
 	printf 'run_launcher:\n  module: dagster\n  class: DefaultRunLauncher\n\nrun_coordinator:\n  module: dagster\n  class: QueuedRunCoordinator\n\nschedules:\n  use_threads: true\n  num_workers: 4\n\nsensors:\n  use_threads: true\n  num_workers: 4\n\ntelemetry:\n  enabled: false\n' > dagster_home/dagster.yaml
 	cd dbt_project && uv run dbt deps
-	pre-commit install
+	uvx pre-commit install
 
 ingest:
 	uv run dg dev -h 0.0.0.0 -p 2320  # Starts webserver + daemon (required for sensors)
@@ -3229,9 +3193,41 @@ def test_bridge_table_exists():
     assert result[0] > 0
 ```
 
+### 12.3 CI/CD — Add Test Stage
+
+After creating the test files above, add Stage 2 to `.github/workflows/ci.yml`:
+
+```yaml
+  # Stage 2: Test — run dbt pipeline + pytest (depends on lint passing)
+  test:
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install uv
+        run: curl -LsSf https://astral.sh/uv/install.sh | sh
+      - name: Install all dependencies
+        run: |
+          source $HOME/.local/bin/env
+          uv sync
+          cd dbt_project && uv run dbt deps
+      - name: Run pipeline
+        run: |
+          source $HOME/.local/bin/env
+          cd dbt_project && uv run dbt seed && uv run dbt build
+      - name: Run tests
+        run: |
+          source $HOME/.local/bin/env
+          cd dbt_project && uv run dbt test
+          uv run pytest tests/ -v
+```
+
 ---
 
-
+Commit the Testing:
 Commit the Testing:
 
 ```bash
@@ -3686,5 +3682,5 @@ setup:
 	# Initialize ClickHouse database
 	clickhouse-client --host localhost --port 9000 --user default --query "CREATE DATABASE IF NOT EXISTS chronos"
 	cd dbt_project && uv run dbt deps
-	pre-commit install
+	uvx pre-commit install
 ```
